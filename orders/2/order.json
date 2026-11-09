@@ -30,9 +30,9 @@
   "createdAt": 1794253658390,
   "updatedAt": 1794253695643,
   "telegram": {
-    "messageId": 0,
-    "photoMessageId": 0,
-    "imageHash": ""
+    "messageId": 161,
+    "photoMessageId": 162,
+    "imageHash": "6ed6eb96ae85665759557cef19d9a5795e622450ad28a7048701eb41bf3da105"
   },
   "attachments": []
 }
