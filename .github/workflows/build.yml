@@ -24,6 +24,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    outputs:
+      version: ${{ steps.ver.outputs.name }}
+      artifact: OrderNotebook-apk-${{ steps.ver.outputs.name }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -99,10 +102,47 @@ jobs:
             app/build/reports
             app/build/test-results
 
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  # Runs only if the build job (incl. tests) succeeded, so a failed build never publishes a Release.
+  release:
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
         with:
-          name: "Order Notebook ${{ steps.ver.outputs.name }}"
-          generate_release_notes: true
-          files: dist/OrderNotebook-${{ steps.ver.outputs.name }}.apk
+          name: ${{ needs.build.outputs.artifact }}
+          path: dist
+
+      - name: Locate release APK
+        id: apk
+        run: |
+          # The release APK is the one without "-debug" in its name (see "Collect APKs" in the build job).
+          APK="$(ls dist/*.apk | grep -v -- '-debug.apk' | head -1 || true)"
+          if [ -z "$APK" ]; then
+            echo "::notice::No release APK in this run (debug-only build) - skipping Release."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "path=$APK" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        if: steps.apk.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+          APK: ${{ steps.apk.outputs.path }}
+        run: |
+          TAG="v${VERSION}"
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::warning::Release $TAG already exists - not creating a duplicate."
+            exit 0
+          fi
+          gh release create "$TAG" "$APK" \
+            --target "${{ github.sha }}" \
+            --title "Order Notebook ${VERSION}" \
+            --generate-notes
