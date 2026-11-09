@@ -33,7 +33,8 @@ class Updater(private val ctx: Context, private val prefs: Prefs) {
 
     fun currentVersion(): String = ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: "0"
 
-    fun check(): Check = try {
+    fun check(): Check {
+      return try {
         val repo = prefs.ghRepo
         if (!repo.matches(Regex("[\\w.-]+/[\\w.-]+"))) return Check.Error("نام Repository باید به شکل owner/repo باشد")
         val c = open("https://api.github.com/repos/$repo/releases/latest", "application/vnd.github+json")
@@ -57,7 +58,8 @@ class Updater(private val ctx: Context, private val prefs: Prefs) {
                 else if (isNewer(r.tag, currentVersion())) Check.Available(r) else Check.UpToDate(r)
             }
         }
-    } catch (e: Exception) { Check.Error("خطای اتصال: ${e.message}") }
+      } catch (e: Exception) { Check.Error("خطای اتصال: ${e.message}") }
+    }
 
     fun isNewer(tag: String, current: String): Boolean {
         fun parts(v: String) = v.trim().removePrefix("v").substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
