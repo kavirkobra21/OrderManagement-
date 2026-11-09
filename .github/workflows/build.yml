@@ -35,7 +35,13 @@ jobs:
           java-version: 17
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          # The runner image ships the Android SDK; accept licenses and install what we compile against.
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKM" ] || SDKM="$(ls -d $ANDROID_HOME/cmdline-tools/*/bin/sdkmanager | head -1)"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-35" "build-tools;35.0.0" "platform-tools" > /dev/null
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       - name: Setup Gradle (install dependencies, cache)
         uses: gradle/actions/setup-gradle@v4
