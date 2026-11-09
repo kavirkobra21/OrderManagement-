@@ -33,11 +33,22 @@
     "settled": true
   },
   "createdAt": 1794254351346,
-  "updatedAt": 1794254403788,
+  "updatedAt": 1794254441490,
   "telegram": {
-    "messageId": 0,
-    "photoMessageId": 0,
-    "imageHash": ""
+    "messageId": 163,
+    "photoMessageId": 164,
+    "imageHash": "0f32b54012d87571814dfaa453b2c63315fc30466cab21dbda15f13376a46c0c"
   },
-  "attachments": []
+  "attachments": [
+    {
+      "path": "payment_receipt.jpg",
+      "type": "receipt",
+      "createdAt": 1794254422152
+    },
+    {
+      "path": "images\/order_ad534cfd-de93-45d4-9317-6354bad44a42.jpg",
+      "type": "order",
+      "createdAt": 1794254428224
+    }
+  ]
 }
