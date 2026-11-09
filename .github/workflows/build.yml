@@ -1,0 +1,102 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Build type"
+        type: choice
+        options: [both, debug, release]
+        default: both
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle (install dependencies, cache)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Compute version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            NAME="${GITHUB_REF_NAME#v}"
+          else
+            NAME="1.0.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "Version: $NAME (code ${GITHUB_RUN_NUMBER})"
+
+      - name: Run unit tests
+        run: gradle --no-daemon --stacktrace :app:testDebugUnitTest -PversionName=${{ steps.ver.outputs.name }} -PversionCode=${{ steps.ver.outputs.code }}
+
+      - name: Build Debug APK
+        if: ${{ github.event.inputs.build_type != 'release' }}
+        run: gradle --no-daemon --stacktrace :app:assembleDebug -PversionName=${{ steps.ver.outputs.name }} -PversionCode=${{ steps.ver.outputs.code }}
+
+      - name: Build Release APK
+        if: ${{ github.event.inputs.build_type != 'debug' }}
+        env:
+          KEYSTORE_PATH: ${{ secrets.KEYSTORE_PATH }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle --no-daemon --stacktrace :app:assembleRelease -PversionName=${{ steps.ver.outputs.name }} -PversionCode=${{ steps.ver.outputs.code }}
+
+      - name: Collect APKs
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/*.apk "dist/OrderNotebook-${{ steps.ver.outputs.name }}.apk" 2>/dev/null || true
+          cp app/build/outputs/apk/debug/*.apk "dist/OrderNotebook-${{ steps.ver.outputs.name }}-debug.apk" 2>/dev/null || true
+          ls -la dist
+
+      - name: Upload APK as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrderNotebook-apk-${{ steps.ver.outputs.name }}
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - name: Upload test and build reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-reports
+          path: |
+            app/build/reports
+            app/build/test-results
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Order Notebook ${{ steps.ver.outputs.name }}"
+          generate_release_notes: true
+          files: dist/OrderNotebook-${{ steps.ver.outputs.name }}.apk

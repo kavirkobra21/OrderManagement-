@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.OrderNotebook" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">#BFDCE6</item>
+        <item name="android:windowBackground">#CFE3EA</item>
+    </style>
+</resources>
