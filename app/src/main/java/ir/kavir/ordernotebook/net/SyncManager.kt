@@ -39,7 +39,7 @@ class SyncException(message: String) : Exception(message)
  * available; jobs that fail stay queued. A mutex guarantees a single worker, and unchanged files are
  * detected by git blob SHA, so nothing is uploaded or sent twice.
  *
- * GitHub layout:  orders/<n>/{order.json, customer.json, order_image.png, payment_receipt.*, images/*}
+ * GitHub layout:  orders/<n>/{order.json, customer.json, order_image.png, payment_receipt.<ext>, images/ (folder)}
  */
 class SyncManager(private val repo: Repo) {
     private val ctx = repo.ctx

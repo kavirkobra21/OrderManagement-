@@ -51,7 +51,7 @@ Settings → GitHub Updater فقط نسخه را بررسی می‌کند و ا�
 ```
 app/src/main/java/ir/kavir/ordernotebook/
   data/   Room (Entities, Db), Repo, Prefs (رمزنگاری‌شده), Backup
-  net/    Telegram (از طریق Worker), Updater
+  net/    Telegram, GitHubApi, SyncManager (صف Pending), Updater
   ui/     NotebookPage (رندر صفحه دفترچه)، صفحات Compose
 .github/workflows/build.yml
 ```
