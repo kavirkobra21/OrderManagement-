@@ -256,35 +256,38 @@ object NotebookPage {
         fitText(c, d.invoice, RectF(165f, 108f, 345f, 150f), 34f, 16f, Layout.Alignment.ALIGN_CENTER, centerV = true)
         notepadSticker(c, 60f, 190f)
 
-        // --- yellow info area
+        // --- yellow info area: every field has its own box, boxes never overlap
         softBlob(c, RectF(30f, 185f, 970f, 660f), 90f, YELLOW)
 
-        stickerOutlineText(c, "اسم", 940f, 255f, 40f, outline = YELLOW)
-        stickerOutlineText(c, "سفارش دهنده:", 940f, 300f, 40f, outline = YELLOW)
-        fitText(c, d.name, RectF(430f, 236f, 700f, 312f), 40f, 16f, centerV = true)
-        dottedLine(c, 430f, 700f, 316f)
+        // name (right column, top)
+        stickerOutlineText(c, "اسم", 940f, 250f, 40f, outline = YELLOW)
+        stickerOutlineText(c, "سفارش دهنده:", 940f, 296f, 40f, outline = YELLOW)
+        fitText(c, d.name, RectF(450f, 232f, 690f, 304f), 38f, 16f, centerV = true)
+        dottedLine(c, 450f, 690f, 312f)
 
-        stickerOutlineText(c, "شماره تماس:", 940f, 420f, 40f, outline = YELLOW)
-        fitText(c, d.phone, RectF(520f, 372f, 765f, 432f), 38f, 16f, Layout.Alignment.ALIGN_CENTER, centerV = true)
-        dottedLine(c, 520f, 765f, 436f)
+        // phone (right column, middle)
+        stickerOutlineText(c, "شماره تماس:", 940f, 400f, 38f, outline = YELLOW)
+        fitText(c, d.phone, RectF(450f, 346f, 700f, 410f), 36f, 16f, Layout.Alignment.ALIGN_CENTER, centerV = true)
+        dottedLine(c, 450f, 700f, 418f)
 
-        stickerOutlineText(c, "وقت تحویل :", 440f, 330f, 36f, outline = YELLOW)
-        fitText(c, d.delivery, RectF(70f, 276f, 325f, 346f), 34f, 14f, centerV = true)
-        dottedLine(c, 70f, 325f, 350f)
+        // delivery (left column, label above value)
+        stickerOutlineText(c, "وقت تحویل:", 410f, 262f, 36f, outline = YELLOW)
+        fitText(c, d.delivery, RectF(170f, 278f, 410f, 340f), 34f, 14f, centerV = true)
+        dottedLine(c, 170f, 410f, 346f)
+        phoneSticker(c, 310f, 365f)
 
-        stickerOutlineText(c, "آدرس:", 505f, 438f, 40f, outline = YELLOW)
-        fitText(c, d.address, RectF(70f, 380f, 495f, 640f), 34f, 14f)
-        phoneSticker(c, 770f, 560f)
+        // address (full width, under the other fields)
+        stickerOutlineText(c, "آدرس:", 940f, 492f, 38f, outline = YELLOW)
+        fitText(c, d.address, RectF(80f, 506f, 920f, 640f), 34f, 14f)
 
-        // --- notes (green)
+        // --- notes (green): label sits above the box so it never touches the text
         polaroid(c, 28f, 690f, -6f, Color.parseColor("#A9D4EA"))
         polaroid(c, 118f, 668f, 8f, Color.parseColor("#F2B3C3"))
         softBlob(c, RectF(55f, 740f, 575f, 1010f), 36f, GREEN)
-        stickerOutlineText(c, "نکات", 600f, 725f, 40f, outline = BLUE)
-        stickerOutlineText(c, "سفارش:", 600f, 770f, 40f, outline = BLUE)
-        fitText(c, d.notes, RectF(85f, 765f, 545f, 985f), 32f, 14f)
+        stickerOutlineText(c, "نکات سفارش:", 575f, 728f, 38f, outline = BLUE)
+        fitText(c, d.notes, RectF(140f, 765f, 545f, 985f), 32f, 14f)
         bookSticker(c, 20f, 905f)
-        c.drawCircle(437f, 690f, 24f, stroke(Color.WHITE, 5f)); c.drawCircle(487f, 690f, 24f, stroke(Color.WHITE, 5f))
+        c.drawCircle(300f, 700f, 22f, stroke(Color.WHITE, 5f)); c.drawCircle(344f, 700f, 22f, stroke(Color.WHITE, 5f))
 
         // --- payments (pink)
         val panel = RectF(595f, 700f, 990f, 1020f)
@@ -301,7 +304,7 @@ object NotebookPage {
             val top = 760f + i * 75f
             val pill = RectF(622f, top, 800f, top + 58f)
             c.drawRoundRect(pill, 29f, 29f, fill(Color.WHITE))
-            val text = if (vals[i] > 0 || i == 2 && d.total > 0) Fmt.money(vals[i]) else ""
+            val text = if (vals[i] > 0 || i == 2 && d.total > 0) Fmt.toman(vals[i]) else ""
             fitText(c, text, RectF(pill.left + 12, pill.top + 4, pill.right - 12, pill.bottom - 4), 32f, 14f, Layout.Alignment.ALIGN_CENTER, centerV = true)
             stickerOutlineText(c, labels[i], 975f, top + 42f, 33f, outline = PINK)
         }
@@ -315,16 +318,15 @@ object NotebookPage {
                 outline = if (b.second) Color.parseColor("#8CD19B") else Color.parseColor("#F8CFDC"))
         }
 
-        // --- order description
-        softBlob(c, RectF(30f, 1055f, 970f, 1385f), 80f, YELLOW)
-        val descB = RectF(730f, 1020f, 960f, 1105f)
-        bubble(c, descB, tailLeft = true)
-        stickerOutlineText(c, "شرح سفارش", 940f, 1075f, 38f)
-        c.save(); c.rotate(8f, 670f, 1050f)
-        c.drawRect(RectF(630f, 1020f, 700f, 1090f), fill(Color.WHITE))
+        // --- order description (inside the lower yellow box; bubble + tail stay above the text)
+        softBlob(c, RectF(30f, 1075f, 970f, 1385f), 80f, YELLOW)
+        bubble(c, RectF(730f, 1035f, 960f, 1115f), tailLeft = true)
+        stickerOutlineText(c, "شرح سفارش", 940f, 1088f, 38f)
+        c.save(); c.rotate(8f, 670f, 1070f)
+        c.drawRect(RectF(640f, 1040f, 705f, 1105f), fill(Color.WHITE))
         c.restore()
         trees(c, 230f, 920f, 1365f)
-        fitText(c, d.description, RectF(190f, 1125f, 935f, 1345f), 34f, 14f)
+        fitText(c, d.description, RectF(250f, 1160f, 935f, 1350f), 34f, 14f)
         coffeeCup(c, 50f, 1235f)
     }
 }

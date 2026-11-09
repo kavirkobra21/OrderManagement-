@@ -83,11 +83,12 @@ fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-fun Field(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier.fillMaxWidth(), singleLine: Boolean = true, minLines: Int = 1, keyboard: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default, password: Boolean = false) {
+fun Field(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier.fillMaxWidth(), singleLine: Boolean = true, minLines: Int = 1, keyboard: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default, password: Boolean = false, suffix: String? = null) {
     OutlinedTextField(
         value = value, onValueChange = onChange, label = { Text(label) }, modifier = modifier,
         singleLine = singleLine, minLines = minLines, keyboardOptions = keyboard,
         visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        suffix = suffix?.let { { Text(it) } },
         shape = RoundedCornerShape(16.dp),
         colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = Color.White, unfocusedContainerColor = Color.White.copy(alpha = 0.8f)),
     )
@@ -152,7 +153,7 @@ fun pageData(o: Order, c: Customer?): PageData {
     val items = OrderItem.decode(o.itemsText)
     val itemLines = items.joinToString("\n") { "• ${it.title} × ${Fmt2.n(it.qty)}" }
     return PageData(
-        date = o.dateText, invoice = o.invoiceNo, name = c?.name.orEmpty(), phone = c?.phone.orEmpty(),
+        date = o.dateText, invoice = o.invoiceNo, name = c?.name.orEmpty(), phone = ir.kavir.ordernotebook.util.Fmt.toLatinDigits(c?.phone.orEmpty()),
         address = c?.address.orEmpty(), delivery = o.deliveryText, notes = o.notes,
         description = listOf(o.description, itemLines).filter { it.isNotBlank() }.joinToString("\n"),
         total = o.total, deposit = o.deposit, remaining = o.remaining,

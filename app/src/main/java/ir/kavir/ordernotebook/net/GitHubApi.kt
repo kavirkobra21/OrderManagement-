@@ -1,0 +1,154 @@
+package ir.kavir.ordernotebook.net
+
+import android.util.Base64
+import ir.kavir.ordernotebook.data.Prefs
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.MessageDigest
+
+/** Pure helpers (no Android dependencies, unit-testable). */
+object GitHubApi {
+    private val urlRegex =
+        Regex("""^(?:https?://)?(?:www\.)?(?:github\.com[/:])?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?(?:/.*)?$""")
+    private val plainRegex = Regex("""[\w.-]+/[\w.-]+""")
+
+    /** "https://github.com/owner/repo(.git)" or "owner/repo" -> "owner/repo" */
+    fun parseRepo(input: String): String {
+        val s = input.trim()
+        val m = urlRegex.matchEntire(s) ?: return s
+        return m.groupValues[1] + "/" + m.groupValues[2]
+    }
+
+    fun isValidRepo(s: String) = plainRegex.matches(s)
+
+    /** Git blob SHA-1 of the content: equals the "sha" GitHub reports for a file, so unchanged files are not re-uploaded. */
+    fun blobSha(bytes: ByteArray): String {
+        val md = MessageDigest.getInstance("SHA-1")
+        md.update("blob ${bytes.size}\u0000".toByteArray(Charsets.UTF_8))
+        md.update(bytes)
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    fun sha256(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+}
+
+/** Thin client for the GitHub REST "contents" API. Network failures surface as IOException. */
+class GitHub(private val prefs: Prefs) {
+
+    class ApiException(val code: Int, message: String) : Exception(message)
+    data class Entry(val name: String, val path: String, val type: String, val sha: String)
+    data class RepoInfo(val fullName: String, val isPrivate: Boolean, val canPush: Boolean)
+
+    private val json = "application/vnd.github+json"
+    private val raw = "application/vnd.github.raw+json"
+
+    private fun url(path: String) = "https://api.github.com/repos/${prefs.ghRepo}/$path"
+
+    private fun exec(method: String, target: String, body: ByteArray? = null, accept: String = json): Pair<Int, ByteArray> {
+        val c = URL(target).openConnection() as HttpURLConnection
+        try {
+            c.requestMethod = method
+            c.connectTimeout = 20_000
+            c.readTimeout = 120_000
+            c.setRequestProperty("Accept", accept)
+            c.setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+            c.setRequestProperty("User-Agent", "OrderNotebook")
+            if (prefs.ghToken.isNotBlank()) c.setRequestProperty("Authorization", "Bearer ${prefs.ghToken}")
+            if (body != null) {
+                c.doOutput = true
+                c.setFixedLengthStreamingMode(body.size)
+                c.setRequestProperty("Content-Type", "application/json")
+                c.outputStream.use { it.write(body) }
+            }
+            val code = c.responseCode
+            val bytes = (if (code in 200..399) c.inputStream else c.errorStream)?.use { it.readBytes() } ?: ByteArray(0)
+            return code to bytes
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    private fun err(code: Int, body: ByteArray): ApiException {
+        val msg = try { JSONObject(String(body, Charsets.UTF_8)).optString("message") } catch (e: Exception) { "" }
+        val text = when (code) {
+            401 -> "توکن GitHub نامعتبر یا منقضی است"
+            403 -> if (msg.contains("rate limit", true)) "محدودیت تعداد درخواست GitHub؛ بعداً دوباره تلاش می‌شود"
+            else "دسترسی رد شد (توکن باید دسترسی Contents: Read and write داشته باشد)"
+            404 -> "مخزن یا فایل پیدا نشد (آدرس مخزن و دسترسی توکن را بررسی کنید)"
+            else -> "خطای GitHub ($code): $msg"
+        }
+        return ApiException(code, text)
+    }
+
+    fun info(): RepoInfo {
+        val (code, body) = exec("GET", "https://api.github.com/repos/${prefs.ghRepo}")
+        if (code != 200) throw err(code, body)
+        val j = JSONObject(String(body, Charsets.UTF_8))
+        val perms = j.optJSONObject("permissions")
+        return RepoInfo(j.optString("full_name"), j.optBoolean("private"), perms?.optBoolean("push") ?: false)
+    }
+
+    /** Lists a directory; a missing directory is an empty list. */
+    fun list(path: String): List<Entry> {
+        val (code, body) = exec("GET", url("contents/$path"))
+        if (code == 404) return emptyList()
+        if (code != 200) throw err(code, body)
+        val text = String(body, Charsets.UTF_8).trim()
+        if (!text.startsWith("[")) return emptyList()
+        val arr = JSONArray(text)
+        return (0 until arr.length()).map {
+            val o = arr.getJSONObject(it)
+            Entry(o.optString("name"), o.optString("path"), o.optString("type"), o.optString("sha"))
+        }
+    }
+
+    fun getRaw(path: String): ByteArray? {
+        val (code, body) = exec("GET", url("contents/$path"), accept = raw)
+        if (code == 404) return null
+        if (code != 200) throw err(code, body)
+        return body
+    }
+
+    fun getText(path: String): String? = getRaw(path)?.toString(Charsets.UTF_8)
+
+    fun sha(path: String): String? {
+        val (code, body) = exec("GET", url("contents/$path"))
+        if (code == 404) return null
+        if (code != 200) throw err(code, body)
+        val t = String(body, Charsets.UTF_8).trim()
+        return if (t.startsWith("{")) JSONObject(t).optString("sha").ifBlank { null } else null
+    }
+
+    /** Creates or updates a file. On a sha conflict (409/422) the current sha is fetched and the write retried. */
+    fun put(path: String, bytes: ByteArray, message: String, knownSha: String?): String {
+        var sha = knownSha
+        for (attempt in 0 until 3) {
+            val b = JSONObject().put("message", message).put("content", Base64.encodeToString(bytes, Base64.NO_WRAP))
+            if (sha != null) b.put("sha", sha)
+            val (code, resp) = exec("PUT", url("contents/$path"), b.toString().toByteArray(Charsets.UTF_8))
+            if (code == 200 || code == 201) return JSONObject(String(resp, Charsets.UTF_8)).getJSONObject("content").getString("sha")
+            if ((code == 409 || code == 422) && attempt < 2) { sha = sha(path); continue }
+            throw err(code, resp)
+        }
+        throw ApiException(409, "تعارض در ذخیره‌ی فایل روی GitHub")
+    }
+
+    fun delete(path: String, sha: String, message: String) {
+        val b = JSONObject().put("message", message).put("sha", sha)
+        val (code, resp) = exec("DELETE", url("contents/$path"), b.toString().toByteArray(Charsets.UTF_8))
+        if (code != 200 && code != 404) throw err(code, resp)
+    }
+
+    /** ISO date of the newest commit touching [path], or null. */
+    fun lastCommitDate(path: String): String? {
+        val (code, body) = exec("GET", url("commits?path=$path&per_page=1"))
+        if (code == 404 || code == 409) return null
+        if (code != 200) throw err(code, body)
+        val arr = JSONArray(String(body, Charsets.UTF_8))
+        if (arr.length() == 0) return null
+        return arr.getJSONObject(0).optJSONObject("commit")?.optJSONObject("committer")?.optString("date")
+    }
+}

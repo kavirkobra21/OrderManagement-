@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.util.UUID
 
 @Entity(tableName = "customers")
 data class Customer(
@@ -15,6 +16,9 @@ data class Customer(
     val createdAt: Long = System.currentTimeMillis(),
     /** null = active, otherwise time moved to the recycle bin */
     val deletedAt: Long? = null,
+    /** stable id used for GitHub sync / duplicate protection */
+    val uid: String = UUID.randomUUID().toString(),
+    val updatedAt: Long = System.currentTimeMillis(),
 )
 
 @Entity(
@@ -42,6 +46,15 @@ data class Order(
     val depositReceived: Boolean = false,
     val settled: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
+    val uid: String = UUID.randomUUID().toString(),
+    /** folder number inside orders/ on GitHub (1, 2, 3 ...) */
+    val syncNo: Long = 0,
+    val updatedAt: Long = System.currentTimeMillis(),
+    // --- sync bookkeeping (never edited by the order form)
+    val tgMessageId: Long = 0,
+    val tgPhotoMessageId: Long = 0,
+    val tgImageHash: String = "",
+    val ghImageHash: String = "",
 ) {
     val remaining: Long get() = if (settled || paid) 0 else (total - deposit).coerceAtLeast(0)
 
@@ -62,7 +75,26 @@ data class Attachment(
     /** file name inside filesDir/attachments */
     val fileName: String,
     val createdAt: Long = System.currentTimeMillis(),
+    /** path of the uploaded file relative to orders/<n>/ ; empty = not uploaded yet */
+    val remotePath: String = "",
+    val tgSent: Boolean = false,
 )
+
+/** Queue of changes waiting to be pushed (Pending Sync). One row per (kind, order). */
+@Entity(tableName = "pending_ops", indices = [Index(value = ["kind", "orderId"], unique = true)])
+data class PendingOp(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val kind: String,
+    val orderId: Long,
+    val createdAt: Long = System.currentTimeMillis(),
+    val attempts: Int = 0,
+    val lastError: String = "",
+)
+
+object OpKind {
+    const val GITHUB = "GH"
+    const val TELEGRAM = "TG"
+}
 
 data class OrderItem(val title: String, val qty: Int, val price: Long) {
     companion object {

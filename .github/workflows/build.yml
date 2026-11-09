@@ -3,6 +3,9 @@ name: Build Android APK
 on:
   push:
     branches: [main, master]
+    # the app commits orders/** to this repo (GitHub storage); that must never trigger a build
+    paths-ignore:
+      - "orders/**"
     tags: ["v*"]
   pull_request:
   workflow_dispatch:

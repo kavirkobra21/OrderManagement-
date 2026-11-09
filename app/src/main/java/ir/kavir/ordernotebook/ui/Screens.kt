@@ -33,6 +33,7 @@ fun HomeScreen(repo: Repo, nav: Nav) {
     val customers by repo.dao.activeCustomers().collectAsState(emptyList())
     val orders by repo.dao.activeOrders().collectAsState(emptyList())
     val trash by repo.dao.deletedCustomers().collectAsState(emptyList())
+    val pending by repo.dao.pendingCount().collectAsState(0)
     val active = orders.count { !it.isCompleted }
     val done = orders.count { it.isCompleted }
     val remaining = orders.sumOf { it.remaining }
@@ -47,8 +48,9 @@ fun HomeScreen(repo: Repo, nav: Nav) {
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 StatCard("تکمیل‌شده", Fmt.toPersianDigits(done.toString()), Color(0xFFBFE5C2), Modifier.weight(1f))
-                StatCard("پرداخت‌های باقی‌مانده", Fmt.money(remaining), PinkC, Modifier.weight(1f))
+                StatCard("پرداخت‌های باقی‌مانده", Fmt.toman(remaining), PinkC, Modifier.weight(1f))
             }
+            if (pending > 0) Text("⏳ ${Fmt.toPersianDigits(pending.toString())} مورد در صف همگام‌سازی (پس از اتصال اینترنت ارسال می‌شود)", style = MaterialTheme.typography.bodySmall)
             Button(onClick = { nav.go(Screen.CustomerForm(null)) }, Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(28.dp)) {
                 Icon(Icons.Filled.Add, null); Spacer(Modifier.width(8.dp)); Text("مشتری جدید")
             }
@@ -173,7 +175,7 @@ fun OrderRow(o: Order, onClick: () -> Unit) {
         Column(Modifier.padding(14.dp)) {
             Text("فاکتور ${o.invoiceNo}  •  ${o.dateText}", fontWeight = FontWeight.Bold)
             Text(listOf(o.description.lines().firstOrNull().orEmpty()).filter { it.isNotBlank() }.firstOrNull() ?: "—", maxLines = 1)
-            Text("کل: ${Fmt.money(o.total)}   باقی‌مانده: ${Fmt.money(o.remaining)}")
+            Text("کل: ${Fmt.toman(o.total)}   باقی‌مانده: ${Fmt.toman(o.remaining)}")
             Text(
                 when { o.stDelivered -> "تحویل داده شده"; o.stReady -> "آماده شده"; o.stInProgress -> "در حال انجام"; else -> "ثبت شده" },
                 color = MaterialTheme.colorScheme.primary,

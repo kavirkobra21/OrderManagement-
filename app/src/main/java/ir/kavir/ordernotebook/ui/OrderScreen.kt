@@ -30,7 +30,6 @@ import ir.kavir.ordernotebook.data.Customer
 import ir.kavir.ordernotebook.data.Order
 import ir.kavir.ordernotebook.data.OrderItem
 import ir.kavir.ordernotebook.data.Repo
-import ir.kavir.ordernotebook.net.Telegram
 import ir.kavir.ordernotebook.util.Fmt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -49,7 +48,6 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
     var items by remember { mutableStateOf(listOf<OrderItem>()) }
     var totalS by remember { mutableStateOf("") }
     var depositS by remember { mutableStateOf("") }
-    var showSend by remember { mutableStateOf(false) }
     var pendingType by remember { mutableStateOf(AttachmentType.RECEIPT) }
     var busy by remember { mutableStateOf(false) }
 
@@ -107,24 +105,6 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
         savePng(bmp, f); bmp.recycle(); f
     }
 
-    suspend fun sendTelegram(o: Order, file: File, receipts: Boolean, photos: Boolean): Telegram.Result = withContext(Dispatchers.IO) {
-        val tg = Telegram(repo.prefs)
-        val fa = repo.prefs.telegramLang == "fa"
-        val c = customer
-        val msg = Telegram.message(o, c?.name.orEmpty(), c?.phone.orEmpty(), c?.address.orEmpty(), itemsAsLines(o), fa)
-        val r1 = tg.sendText(msg)
-        if (!r1.ok) return@withContext r1
-        val r2 = tg.sendPhoto(file, null)
-        if (!r2.ok) return@withContext r2
-        val all = repo.dao.attachmentsOfCustomerNow(customerId).filter { it.orderId == o.id }
-        val extra = all.filter { (receipts && it.type == AttachmentType.RECEIPT) || (photos && it.type != AttachmentType.RECEIPT) }
-        for (a in extra) {
-            val r = tg.sendPhoto(repo.fileOf(a), attLabel(a.type))
-            if (!r.ok) return@withContext r
-        }
-        Telegram.Result(true, "به تلگرام ارسال شد")
-    }
-
     Column(Modifier.fillMaxSize()) {
         TopBar(if (orderId == null) "سفارش جدید" else "سفارش ${order.invoiceNo}", onBack = { nav.back() })
         if (!loaded) return@Column
@@ -151,8 +131,8 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                         Field("عنوان", it.title, { v -> items = items.toMutableList().also { l -> l[i] = it.copy(title = v) } }, Modifier.weight(1f))
                         Field("تعداد", it.qty.toString(), { v -> items = items.toMutableList().also { l -> l[i] = it.copy(qty = Fmt.parseMoney(v).toInt().coerceAtLeast(1)) } },
                             Modifier.width(70.dp), keyboard = KeyboardOptions(keyboardType = KeyboardType.Number))
-                        Field("قیمت", if (it.price > 0) it.price.toString() else "", { v -> items = items.toMutableList().also { l -> l[i] = it.copy(price = Fmt.parseMoney(v)) } },
-                            Modifier.width(110.dp), keyboard = KeyboardOptions(keyboardType = KeyboardType.Number))
+                        Field("قیمت (تومان)", if (it.price > 0) it.price.toString() else "", { v -> items = items.toMutableList().also { l -> l[i] = it.copy(price = Fmt.parseMoney(v)) } },
+                            Modifier.width(130.dp), keyboard = KeyboardOptions(keyboardType = KeyboardType.Number), suffix = "ت")
                         IconButton(onClick = { items = items.toMutableList().also { l -> l.removeAt(i) } }) { Icon(Icons.Filled.Close, "حذف آیتم") }
                     }
                 }
@@ -166,9 +146,9 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
             }
 
             Section("پرداخت‌ها") {
-                Field("هزینه کل", totalS, { totalS = Fmt.toLatinDigits(it).filter { c -> c.isDigit() } }, keyboard = KeyboardOptions(keyboardType = KeyboardType.Number))
-                Field("بیعانه", depositS, { depositS = Fmt.toLatinDigits(it).filter { c -> c.isDigit() } }, keyboard = KeyboardOptions(keyboardType = KeyboardType.Number))
-                Text("باقی‌مانده: ${Fmt.money(live.remaining)}", style = MaterialTheme.typography.titleMedium)
+                Field("هزینه کل", totalS, { totalS = Fmt.toLatinDigits(it).filter { c -> c.isDigit() } }, keyboard = KeyboardOptions(keyboardType = KeyboardType.Number), suffix = "تومان")
+                Field("بیعانه", depositS, { depositS = Fmt.toLatinDigits(it).filter { c -> c.isDigit() } }, keyboard = KeyboardOptions(keyboardType = KeyboardType.Number), suffix = "تومان")
+                Text("باقی‌مانده: ${Fmt.toman(live.remaining)}", style = MaterialTheme.typography.titleMedium)
             }
 
             Section("وضعیت") {
@@ -219,14 +199,11 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                     onClick = {
                         scope.launch {
                             busy = true
-                            val wasNew = order.id == 0L
-                            val saved = save()
-                            snack.showSnackbar("ذخیره شد")
-                            val p = repo.prefs
-                            if (wasNew && saved != null && p.autoSend && p.workerUrl.isNotBlank() && p.chatId.isNotBlank()) {
-                                val r = sendTelegram(saved, renderFile(saved), receipts = true, photos = false)
-                                snack.showSnackbar(r.message)
-                            }
+                            save()
+                            snack.showSnackbar(
+                                if (repo.prefs.ghConfigured || repo.prefs.tgConfigured) "ذخیره شد؛ همگام‌سازی در صف است (بدون اینترنت پس از اتصال انجام می‌شود)"
+                                else "ذخیره شد"
+                            )
                             busy = false
                         }
                     },
@@ -254,40 +231,20 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                     }
                 }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(48.dp)) { Icon(Icons.Filled.Share, null); Spacer(Modifier.width(8.dp)); Text("اشتراک‌گذاری تصویر") }
 
-                FilledTonalButton(onClick = { showSend = true }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(48.dp)) {
-                    Icon(Icons.Filled.Send, null); Spacer(Modifier.width(8.dp)); Text("ارسال به تلگرام")
+                FilledTonalButton(onClick = {
+                    scope.launch {
+                        if (!repo.prefs.tgConfigured) { snack.showSnackbar("ابتدا از تنظیمات، Telegram Settings را کامل کنید"); return@launch }
+                        busy = true
+                        val saved = save()!!
+                        repo.enqueue(saved.id, gh = false, tg = true, forceTg = true)
+                        snack.showSnackbar(if ((repo.dao.order(saved.id)?.tgMessageId ?: 0L) != 0L) "ویرایش پیام تلگرام در صف قرار گرفت" else "ارسال به تلگرام در صف قرار گرفت")
+                        busy = false
+                    }
+                }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+                    Icon(Icons.Filled.Send, null); Spacer(Modifier.width(8.dp)); Text("ارسال / بروزرسانی در تلگرام")
                 }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
         }
-    }
-
-    if (showSend) {
-        var receipts by remember { mutableStateOf(true) }
-        var photos by remember { mutableStateOf(false) }
-        AlertDialog(
-            onDismissRequest = { showSend = false },
-            title = { Text("ارسال به تلگرام") },
-            text = {
-                Column {
-                    Text("پیام سفارش و تصویر دفترچه ارسال می‌شود.")
-                    CheckRow("تصویر رسید پرداخت", receipts) { receipts = it }
-                    CheckRow("سایر عکس‌های سفارش", photos) { photos = it }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showSend = false
-                    scope.launch {
-                        busy = true
-                        val saved = save()!!
-                        val r = sendTelegram(saved, renderFile(saved), receipts, photos)
-                        snack.showSnackbar(r.message)
-                        busy = false
-                    }
-                }) { Text("ارسال") }
-            },
-            dismissButton = { TextButton(onClick = { showSend = false }) { Text("انصراف") } },
-        )
     }
 }

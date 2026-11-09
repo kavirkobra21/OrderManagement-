@@ -25,6 +25,11 @@ object Fmt {
         return if (fa) toPersianDigits(s).replace(",", "٬") else s
     }
 
+    /** 86000 -> "86,000" (English digits, comma thousands) */
+    fun moneyEn(v: Long): String = "%,d".format(java.util.Locale.US, v)
+
+    fun toman(v: Long): String = moneyEn(v) + " تومان"
+
     fun parseMoney(s: String): Long = toLatinDigits(s).filter { it.isDigit() }.toLongOrNull() ?: 0L
 
     /** Today's Jalali date as yyyy/mm/dd (Persian digits). */

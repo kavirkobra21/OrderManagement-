@@ -31,7 +31,8 @@ class Nav(initial: Screen) {
 @Composable
 fun App() {
     val ctx = LocalContext.current
-    val repo = remember { Repo(ctx.applicationContext) }
+    val repo = remember { Repo.get(ctx.applicationContext) }
+    LaunchedEffect(Unit) { repo.sync.start() }
     val nav = remember { Nav(Screen.Home) }
     val snack = remember { SnackbarHostState() }
     BackHandler(enabled = nav.stack.size > 1) { nav.back() }

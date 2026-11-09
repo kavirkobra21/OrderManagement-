@@ -1,175 +1,143 @@
 package ir.kavir.ordernotebook.net
 
-import ir.kavir.ordernotebook.data.Order
 import ir.kavir.ordernotebook.data.Prefs
-import ir.kavir.ordernotebook.util.Fmt
 import org.json.JSONObject
 import java.io.File
-import java.io.OutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
 
 /**
- * All requests go to the user's Cloudflare Worker: {worker}/bot{TOKEN}/{method}.
- * If the bot token field is empty the placeholder "env" is used and the Worker substitutes
- * the BOT_TOKEN secret stored in Cloudflare (most secure: token never reaches the phone).
+ * Direct Telegram Bot API client. Network problems are thrown as IOException (so the sync queue
+ * keeps the job and retries later); Telegram-level errors come back as [Result.ok] == false.
  */
-class Telegram(private val prefs: Prefs) {
+class Telegram(private val token: String, private val chatId: String) {
 
-    data class Result(val ok: Boolean, val message: String)
+    data class Result(
+        val ok: Boolean,
+        val message: String,
+        val messageId: Long = 0,
+        /** the message to edit no longer exists (deleted in Telegram) */
+        val notFound: Boolean = false,
+    )
 
-    private fun base(): String? {
-        val w = prefs.workerUrl
-        if (w.isBlank()) return null
-        val token = prefs.botToken.ifBlank { "env" }
-        return "$w/bot$token"
+    companion object {
+        fun from(p: Prefs) = Telegram(p.botToken, p.chatId)
+        private const val MAX_PHOTO = 9_500_000L
     }
 
-    private fun validate(): String? = when {
-        prefs.workerUrl.isBlank() -> "آدرس Worker وارد نشده است"
-        !prefs.workerUrl.startsWith("https://") -> "آدرس Worker باید با https:// شروع شود"
-        prefs.chatId.isBlank() -> "Chat ID وارد نشده است"
+    private fun base() = "https://api.telegram.org/bot${token.trim()}"
+
+    fun configError(): String? = when {
+        token.isBlank() -> "Bot Token وارد نشده است"
+        chatId.isBlank() -> "Chat ID وارد نشده است"
         else -> null
     }
 
+    /** Used by the "Test Connection" button; never throws. */
     fun checkConnection(): Result {
-        val w = prefs.workerUrl
-        if (w.isBlank()) return Result(false, "آدرس Worker وارد نشده است")
+        configError()?.let { return Result(false, it) }
         return try {
-            val (code, body) = request("GET", "$w/bot${prefs.botToken.ifBlank { "env" }}/getMe")
-            val j = JSONObject(body)
-            if (code == 200 && j.optBoolean("ok")) {
-                Result(true, "اتصال برقرار است. بات: @" + j.optJSONObject("result")?.optString("username"))
-            } else Result(false, "پاسخ نامعتبر (${code}): " + j.optString("description", body.take(200)))
-        } catch (e: Exception) {
-            Result(false, "خطای اتصال: ${e.message}")
+            val me = call("getMe", JSONObject(), raw = true)
+            if (!me.ok) return Result(false, "Bot Token نامعتبر است: ${me.message}")
+            val name = me.message
+            val chat = call("getChat", JSONObject().put("chat_id", chatId), raw = true)
+            if (!chat.ok) Result(false, "ربات @$name پیدا شد ولی چت در دسترس نیست. Chat ID را بررسی کنید و ربات را در تلگرام Start کنید. (${chat.message})")
+            else Result(true, "اتصال برقرار است. ربات: @$name")
+        } catch (e: IOException) {
+            Result(false, "خطای اتصال: ${e.message}. ممکن است دسترسی به تلگرام در این شبکه محدود باشد.")
         }
     }
 
-    fun sendText(text: String): Result {
-        validate()?.let { return Result(false, it) }
-        return call("sendMessage", mapOf("chat_id" to prefs.chatId, "text" to text))
-    }
+    @Throws(IOException::class)
+    fun sendText(text: String): Result =
+        call("sendMessage", JSONObject().put("chat_id", chatId).put("text", text))
 
+    @Throws(IOException::class)
+    fun editText(messageId: Long, text: String): Result =
+        call("editMessageText", JSONObject().put("chat_id", chatId).put("message_id", messageId).put("text", text))
+
+    @Throws(IOException::class)
     fun sendPhoto(file: File, caption: String? = null): Result {
-        validate()?.let { return Result(false, it) }
-        val fields = mutableMapOf("chat_id" to prefs.chatId)
+        val fields = mutableMapOf("chat_id" to chatId)
         if (!caption.isNullOrBlank()) fields["caption"] = caption.take(1000)
-        return multipart("sendPhoto", fields, "photo", file)
+        return if (file.length() > MAX_PHOTO) multipart("sendDocument", fields, "document", file)
+        else multipart("sendPhoto", fields, "photo", file)
     }
 
-    /** Sends as a document to avoid Telegram recompression of the generated order image. */
-    fun sendDocument(file: File, caption: String? = null): Result {
-        validate()?.let { return Result(false, it) }
-        val fields = mutableMapOf("chat_id" to prefs.chatId)
-        if (!caption.isNullOrBlank()) fields["caption"] = caption.take(1000)
-        return multipart("sendDocument", fields, "document", file)
+    @Throws(IOException::class)
+    fun editPhoto(messageId: Long, file: File): Result {
+        val media = JSONObject().put("type", "photo").put("media", "attach://photo").toString()
+        return multipart(
+            "editMessageMedia",
+            mapOf("chat_id" to chatId, "message_id" to messageId.toString(), "media" to media),
+            "photo", file,
+        )
     }
 
-    private fun call(method: String, params: Map<String, String>): Result = try {
-        val url = base() + "/" + method
-        val json = JSONObject(params).toString()
-        val (code, body) = request("POST", url, json.toByteArray(), "application/json; charset=utf-8")
-        parse(code, body)
-    } catch (e: Exception) { Result(false, "خطای اتصال: ${e.message}") }
+    // ------------------------------------------------------------------ http
 
-    private fun multipart(method: String, fields: Map<String, String>, fileField: String, file: File): Result = try {
-        val boundary = "----" + UUID.randomUUID()
-        val c2 = open("POST", base() + "/" + method)
-        c2.doOutput = true
-        c2.setChunkedStreamingMode(16 * 1024)
-        c2.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-        c2.outputStream.use { os ->
-            fun w(s: String) = os.write(s.toByteArray())
-            for ((k, v) in fields) {
-                w("--$boundary\r\nContent-Disposition: form-data; name=\"$k\"\r\n\r\n$v\r\n")
-            }
-            w("--$boundary\r\nContent-Disposition: form-data; name=\"$fileField\"; filename=\"${file.name}\"\r\nContent-Type: application/octet-stream\r\n\r\n")
-            file.inputStream().use { it.copyTo(os as OutputStream) }
-            w("\r\n--$boundary--\r\n")
-        }
-        val code = c2.responseCode
-        val body = (if (code in 200..299) c2.inputStream else c2.errorStream)?.bufferedReader()?.readText().orEmpty()
-        parse(code, body)
-    } catch (e: Exception) { Result(false, "خطای اتصال: ${e.message}") }
-
-    private fun parse(code: Int, body: String): Result = try {
-        val j = JSONObject(body)
-        if (j.optBoolean("ok")) Result(true, "ارسال شد")
-        else Result(false, "خطای تلگرام ($code): " + j.optString("description", body.take(200)) +
-            if (code == 403) " — ابتدا باید ربات را Start کنید" else "")
-    } catch (e: Exception) { Result(false, "پاسخ نامعتبر از Worker ($code)") }
-
-    private fun open(method: String, url: String): HttpURLConnection =
+    private fun open(url: String): HttpURLConnection =
         (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = method
+            requestMethod = "POST"
             connectTimeout = 20_000
             readTimeout = 60_000
         }
 
-    private fun request(method: String, url: String, body: ByteArray? = null, type: String? = null): Pair<Int, String> {
-        val c = open(method, url)
-        if (body != null) {
+    private fun call(method: String, body: JSONObject, raw: Boolean = false): Result {
+        val c = open(base() + "/" + method)
+        try {
             c.doOutput = true
-            c.setRequestProperty("Content-Type", type ?: "application/json")
-            c.outputStream.use { it.write(body) }
-        }
-        val code = c.responseCode
-        val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.readText().orEmpty()
-        return code to text
+            c.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            return parse(c.responseCode, read(c), raw)
+        } finally { c.disconnect() }
     }
 
-    companion object {
-        fun payStatus(o: Order, fa: Boolean): String = when {
-            o.settled || o.paid -> if (fa) "تسویه کامل" else "Fully paid"
-            o.depositReceived -> if (fa) "بیعانه دریافت شده" else "Deposit received"
-            else -> if (fa) "پرداخت نشده" else "Unpaid"
+    private fun multipart(method: String, fields: Map<String, String>, fileField: String, file: File): Result {
+        val boundary = "----" + UUID.randomUUID()
+        val c = open(base() + "/" + method)
+        try {
+            c.doOutput = true
+            c.setChunkedStreamingMode(16 * 1024)
+            c.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            c.outputStream.use { os ->
+                fun w(s: String) = os.write(s.toByteArray(Charsets.UTF_8))
+                for ((k, v) in fields) w("--$boundary\r\nContent-Disposition: form-data; name=\"$k\"\r\n\r\n$v\r\n")
+                w("--$boundary\r\nContent-Disposition: form-data; name=\"$fileField\"; filename=\"${file.name}\"\r\nContent-Type: application/octet-stream\r\n\r\n")
+                file.inputStream().use { it.copyTo(os) }
+                w("\r\n--$boundary--\r\n")
+            }
+            return parse(c.responseCode, read(c), false)
+        } finally { c.disconnect() }
+    }
+
+    private fun read(c: HttpURLConnection): String {
+        val code = c.responseCode
+        return (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+    }
+
+    /** raw=true: for getMe/getChat, [Result.message] carries the bot username instead of "OK". */
+    private fun parse(code: Int, body: String, raw: Boolean): Result {
+        val j = try { JSONObject(body) } catch (e: Exception) { return Result(false, "پاسخ نامعتبر از تلگرام ($code)") }
+        if (j.optBoolean("ok")) {
+            val r = j.opt("result")
+            val obj = r as? JSONObject
+            val id = obj?.optLong("message_id", 0) ?: 0
+            val msg = if (raw) (obj?.optString("username").orEmpty().ifBlank { obj?.optString("title").orEmpty() }) else "OK"
+            return Result(true, msg, id)
         }
-
-        fun orderStatus(o: Order, fa: Boolean): String = when {
-            o.stDelivered -> if (fa) "تحویل داده شده" else "Delivered"
-            o.stReady -> if (fa) "آماده شده" else "Ready"
-            o.stInProgress -> if (fa) "در حال انجام" else "In progress"
-            else -> if (fa) "ثبت شده" else "Registered"
+        val desc = j.optString("description")
+        if (desc.contains("message is not modified", true)) return Result(true, "بدون تغییر")
+        val notFound = desc.contains("message to edit not found", true) ||
+            desc.contains("MESSAGE_ID_INVALID", true) || desc.contains("message can't be edited", true)
+        val hint = when (code) {
+            401 -> " — Bot Token نامعتبر است"
+            403 -> " — ابتدا باید ربات را در تلگرام Start کنید"
+            429 -> " — محدودیت تعداد درخواست؛ بعداً دوباره تلاش می‌شود"
+            else -> ""
         }
-
-        fun message(o: Order, name: String, phone: String, address: String, itemsLines: String, fa: Boolean): String {
-            val m = { v: Long -> Fmt.money(v, fa) }
-            val details = listOf(o.description, itemsLines).filter { it.isNotBlank() }.joinToString("\n")
-            return if (fa) """
-WORK ORDER NOTIFICATION
-
-Customer Name (نام مشتری): $name
-Phone Number (شماره تماس): $phone
-Order Number (شماره فاکتور): ${o.invoiceNo}
-Order Date (تاریخ): ${o.dateText}
-Delivery Date (زمان تحویل): ${o.deliveryText}
-Address (آدرس): $address
-Order Details (شرح سفارش):
-$details
-Total Amount (هزینه کل): ${m(o.total)}
-Deposit (بیعانه): ${m(o.deposit)}
-Remaining Balance (باقیمانده): ${m(o.remaining)}
-Payment Status (وضعیت پرداخت): ${payStatus(o, true)}
-Order Status (وضعیت سفارش): ${orderStatus(o, true)}
-""".trim() else """
-WORK ORDER NOTIFICATION
-
-Customer Name: $name
-Phone Number: $phone
-Order Number: ${o.invoiceNo}
-Order Date: ${o.dateText}
-Delivery Date: ${o.deliveryText}
-Address: $address
-Order Details:
-$details
-Total Amount: ${m(o.total)}
-Deposit: ${m(o.deposit)}
-Remaining Balance: ${m(o.remaining)}
-Payment Status: ${payStatus(o, false)}
-Order Status: ${orderStatus(o, false)}
-""".trim()
-        }
+        return Result(false, "خطای تلگرام ($code): $desc$hint", notFound = notFound)
     }
 }

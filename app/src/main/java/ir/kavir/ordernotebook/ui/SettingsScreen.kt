@@ -15,11 +15,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import ir.kavir.ordernotebook.data.Backup
 import ir.kavir.ordernotebook.data.Repo
+import ir.kavir.ordernotebook.net.GitHub
+import ir.kavir.ordernotebook.net.SyncManager
 import ir.kavir.ordernotebook.net.Telegram
 import ir.kavir.ordernotebook.net.Updater
+import ir.kavir.ordernotebook.util.Fmt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -30,21 +34,30 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
     val scope = rememberCoroutineScope()
     val prefs = repo.prefs
     val updater = remember { Updater(ctx, prefs) }
-    val tg = remember { Telegram(prefs) }
 
-    var token by remember { mutableStateOf(prefs.botToken) }
-    var chat by remember { mutableStateOf(prefs.chatId) }
-    var worker by remember { mutableStateOf(prefs.workerUrl) }
+    // ---- Telegram
+    var showTg by remember { mutableStateOf(false) }
+    var tgConfigured by remember { mutableStateOf(prefs.tgConfigured) }
     var lang by remember { mutableStateOf(prefs.telegramLang) }
     var auto by remember { mutableStateOf(prefs.autoSend) }
-    var tgStatus by remember { mutableStateOf("") }
 
-    var ghToken by remember { mutableStateOf(prefs.ghToken) }
+    // ---- GitHub connection (entered once, stored encrypted)
+    var ghEditing by remember { mutableStateOf(!prefs.ghConfigured) }
     var ghRepo by remember { mutableStateOf(prefs.ghRepo) }
+    var ghToken by remember { mutableStateOf(prefs.ghToken) }
+    var ghStatus by remember { mutableStateOf("") }
+
+    // ---- updater
     var check by remember { mutableStateOf<Updater.Check?>(null) }
     var progress by remember { mutableStateOf<Int?>(null) }
-    var busy by remember { mutableStateOf(false) }
 
+    // ---- sync / backup
+    val pending by repo.dao.pendingCount().collectAsState(0)
+    val lastError by repo.dao.lastOpError().collectAsState(null)
+    val syncing by repo.sync.syncing.collectAsState()
+    var lastSync by remember { mutableStateOf(prefs.ghLastSync) }
+    var remoteInfo by remember { mutableStateOf<SyncManager.RemoteInfo?>(null) }
+    var busy by remember { mutableStateOf(false) }
     var pendingImport by remember { mutableStateOf<Pair<Uri, Backup.Info>?>(null) }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
@@ -62,62 +75,71 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
         }
     }
 
-    fun saveTelegram() {
-        prefs.botToken = token; prefs.chatId = chat; prefs.workerUrl = worker; prefs.telegramLang = lang; prefs.autoSend = auto
-    }
+    fun fmtTime(t: Long) = if (t <= 0) "—" else SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US).format(Date(t))
 
     Column(Modifier.fillMaxSize()) {
         TopBar("تنظیمات", onBack = { nav.back() })
         Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
 
-            Section("تلگرام (از طریق Cloudflare Worker)") {
-                Field("Cloudflare Worker URL", worker, { worker = it }, keyboard = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri))
-                Field("Telegram Bot Token (اختیاری اگر در Worker ذخیره شده)", token, { token = it }, password = true)
-                Field("Telegram Chat ID", chat, { chat = it })
+            // ============================================================ Telegram
+            Section("تلگرام") {
+                Text(if (tgConfigured) "✓ Bot Token و Chat ID ذخیره شده است" else "هنوز تنظیم نشده است")
+                Button(onClick = { showTg = true }, Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) { Text("Telegram Settings") }
                 Text("زبان پیام‌ها")
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(lang == "fa", { lang = "fa" }); Text("فارسی")
+                    RadioButton(lang == "fa", { lang = "fa"; prefs.telegramLang = "fa" }); Text("فارسی")
                     Spacer(Modifier.width(16.dp))
-                    RadioButton(lang == "en", { lang = "en" }); Text("English")
+                    RadioButton(lang == "en", { lang = "en"; prefs.telegramLang = "en" }); Text("English")
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(auto, { auto = it }); Spacer(Modifier.width(8.dp)); Text("ارسال خودکار پس از ثبت سفارش جدید")
+                    Switch(auto, { auto = it; prefs.autoSend = it }); Spacer(Modifier.width(8.dp)); Text("ارسال خودکار سفارش‌های جدید")
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { saveTelegram(); scope.launch { snack.showSnackbar("ذخیره شد") } }) { Text("ذخیره") }
-                    OutlinedButton(enabled = !busy, onClick = {
-                        saveTelegram(); busy = true; tgStatus = "در حال بررسی…"
-                        scope.launch {
-                            val r = withContext(Dispatchers.IO) { tg.checkConnection() }
-                            tgStatus = (if (r.ok) "✓ " else "✗ ") + r.message; busy = false
-                        }
-                    }) { Text("بررسی اتصال") }
-                    OutlinedButton(enabled = !busy, onClick = {
-                        saveTelegram(); busy = true; tgStatus = "در حال ارسال…"
-                        scope.launch {
-                            val r = withContext(Dispatchers.IO) { tg.sendText("✅ پیام آزمایشی از دفترچه سفارش / Test message") }
-                            tgStatus = (if (r.ok) "✓ " else "✗ ") + r.message; busy = false
-                        }
-                    }) { Text("پیام آزمایشی") }
-                }
-                if (tgStatus.isNotBlank()) Text(tgStatus)
                 Text(
-                    "نکته: برای دریافت پیام خصوصی، ابتدا ربات را در تلگرام Start کنید. راه‌اندازی Worker در README توضیح داده شده است.",
+                    "با تغییر سفارش در برنامه، همان پیام قبلی در تلگرام ویرایش می‌شود. ربات باید در تلگرام Start شده باشد. " +
+                        "اتصال مستقیم به تلگرام لازم است و ممکن است در بعضی شبکه‌ها محدود باشد؛ در این حالت پیام‌ها در صف می‌مانند.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
 
+            // ============================================================ GitHub connection
+            Section("اتصال GitHub (ذخیره‌ی سفارش‌ها و تصاویر)") {
+                if (!ghEditing) {
+                    Text("مخزن: ${prefs.ghRepo}")
+                    Text("✓ توکن به‌صورت رمزنگاری‌شده ذخیره شده و نیازی به وارد کردن مجدد نیست")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { ghEditing = true }) { Text("ویرایش") }
+                        OutlinedButton(enabled = !busy, onClick = {
+                            busy = true; ghStatus = "در حال بررسی…"
+                            scope.launch { ghStatus = testGitHub(prefs); busy = false }
+                        }) { Text("بررسی اتصال") }
+                    }
+                } else {
+                    Field("Repository URL یا owner/repo", ghRepo, { ghRepo = it }, keyboard = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri))
+                    Field("GitHub Personal Access Token", ghToken, { ghToken = it }, password = true)
+                    Text("دسترسی لازم: Contents → Read and write (فقط برای همین مخزن).", style = MaterialTheme.typography.bodySmall)
+                    Button(enabled = !busy && ghToken.isNotBlank() && ghRepo.isNotBlank(), onClick = {
+                        prefs.ghRepo = ghRepo; prefs.ghToken = ghToken
+                        ghRepo = prefs.ghRepo
+                        busy = true; ghStatus = "ذخیره شد؛ در حال بررسی…"
+                        scope.launch { ghStatus = testGitHub(prefs); busy = false; if (prefs.ghConfigured) ghEditing = false }
+                    }) { Text("ذخیره و بررسی") }
+                }
+                if (ghStatus.isNotBlank()) Text(ghStatus)
+                Text(
+                    "هشدار: اطلاعات مشتریان (نام، تلفن، آدرس، رسیدها) در مخزن ذخیره می‌شود؛ مخزن باید Private باشد. " +
+                        "اگر مخزن Public باشد، برنامه از آپلود خودداری می‌کند.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            // ============================================================ Updater (version only)
             Section("GitHub Updater") {
                 val cur = remember { updater.currentVersion() }
                 Text("نسخه فعلی: $cur")
-                Field("Repository (owner/repo)", ghRepo, { ghRepo = it })
-                Field("GitHub Personal Access Token (فقط برای مخزن خصوصی)", ghToken, { ghToken = it }, password = true)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(enabled = !busy && progress == null, onClick = {
-                        prefs.ghToken = ghToken; prefs.ghRepo = ghRepo; busy = true; check = null
-                        scope.launch { check = withContext(Dispatchers.IO) { updater.check() }; busy = false }
-                    }) { Text("بررسی بروزرسانی") }
-                }
+                Button(enabled = !busy && progress == null, onClick = {
+                    busy = true; check = null
+                    scope.launch { check = withContext(Dispatchers.IO) { updater.check() }; busy = false }
+                }) { Text("Check for Updates") }
                 when (val c = check) {
                     is Updater.Check.Error -> Text("خطا: ${c.msg}", color = MaterialTheme.colorScheme.error)
                     is Updater.Check.UpToDate -> Text("برنامه به‌روز است" + (c.release?.let { " (آخرین نسخه: ${it.tag})" } ?: ""))
@@ -142,25 +164,124 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                                 progress = null
                                 r.fold({ updater.install(it) }, { snack.showSnackbar("دانلود ناموفق: ${it.message}") })
                             }
-                        }) { Text("دانلود و نصب بروزرسانی") }
+                        }) { Text("Download Update") }
                         Text("اطلاعات مشتریان، عکس‌ها و تنظیمات هنگام بروزرسانی حفظ می‌شوند.", style = MaterialTheme.typography.bodySmall)
                     }
                     null -> {}
                 }
             }
 
-            Section("بکاپ و بازیابی") {
-                Text("بکاپ شامل مشتریان، سفارش‌ها، همه تصاویر، سطل زباله و تنظیمات (از جمله توکن‌ها) است؛ فایل را در جای امن نگه دارید.", style = MaterialTheme.typography.bodySmall)
+            // ============================================================ sync + GitHub backup
+            Section("همگام‌سازی و GitHub Backup") {
+                Text(
+                    when {
+                        syncing -> "در حال همگام‌سازی…"
+                        pending > 0 -> "⏳ ${Fmt.toPersianDigits(pending.toString())} مورد در صف همگام‌سازی"
+                        else -> "✓ همه چیز همگام است"
+                    }
+                )
+                lastError?.let { Text("آخرین خطا: $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                Text("آخرین بکاپ/همگام‌سازی GitHub: ${fmtTime(lastSync)}")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        if (!repo.sync.online()) scope.launch { snack.showSnackbar("اینترنت در دسترس نیست؛ پس از اتصال خودکار انجام می‌شود") }
+                        repo.sync.kick()
+                    }) { Text("Sync now") }
+                    OutlinedButton(enabled = !busy && prefs.ghConfigured, onClick = {
+                        scope.launch {
+                            val n = repo.enqueueAll()
+                            snack.showSnackbar("${Fmt.toPersianDigits(n.toString())} سفارش برای آپلود در صف قرار گرفت")
+                        }
+                    }) { Text("Backup to GitHub") }
+                }
+                OutlinedButton(enabled = !busy && prefs.ghConfigured, onClick = {
+                    busy = true
+                    scope.launch {
+                        val r = withContext(Dispatchers.IO) { repo.sync.remoteInfo() }
+                        busy = false
+                        r.fold({ remoteInfo = it }, { snack.showSnackbar("خطا: " + (it.message ?: "اتصال ناموفق")) })
+                    }
+                }, modifier = Modifier.fillMaxWidth()) { Text("Restore from GitHub") }
+                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+
+            // ============================================================ ZIP
+            Section("Export / Import (ZIP)") {
+                Text("فایل ZIP شامل همه مشتریان، سفارش‌ها، تصاویر و رسیدها، سطل زباله و تنظیمات است؛ در جای امن نگه دارید.", style = MaterialTheme.typography.bodySmall)
                 Button(enabled = !busy, onClick = {
                     exportLauncher.launch("OrderNotebook-backup-" + SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date()) + ".zip")
                 }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) { Text("Export Backup") }
                 OutlinedButton(enabled = !busy, onClick = { importLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
                     modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) { Text("Import Backup") }
-                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
         }
     }
 
+    // ---------------------------------------------------------------- Telegram Settings dialog
+    if (showTg) {
+        var token by remember { mutableStateOf(prefs.botToken) }
+        var chat by remember { mutableStateOf(prefs.chatId) }
+        var status by remember { mutableStateOf("") }
+        var testing by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { showTg = false },
+            title = { Text("Telegram Settings") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Field("Bot Token", token, { token = it }, password = true)
+                    Field("Chat ID", chat, { chat = it })
+                    OutlinedButton(enabled = !testing, onClick = {
+                        testing = true; status = "در حال بررسی…"
+                        scope.launch {
+                            val r = withContext(Dispatchers.IO) { Telegram(token.trim(), chat.trim()).checkConnection() }
+                            status = (if (r.ok) "✓ " else "✗ ") + r.message
+                            testing = false
+                        }
+                    }) { Text("Test Connection") }
+                    if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    prefs.botToken = token; prefs.chatId = chat
+                    tgConfigured = prefs.tgConfigured
+                    showTg = false
+                    scope.launch { snack.showSnackbar("تنظیمات تلگرام ذخیره شد") }
+                }) { Text("Save Settings") }
+            },
+            dismissButton = { TextButton(onClick = { showTg = false }) { Text("انصراف") } },
+        )
+    }
+
+    // ---------------------------------------------------------------- GitHub restore confirm
+    remoteInfo?.let { info ->
+        AlertDialog(
+            onDismissRequest = { remoteInfo = null },
+            title = { Text("بازیابی از GitHub") },
+            text = {
+                Text(
+                    "در مخزن ${Fmt.toPersianDigits(info.orders.toString())} سفارش پیدا شد.\n" +
+                        "آخرین بکاپ روی GitHub: ${info.lastBackup?.replace('T', ' ')?.removeSuffix("Z") ?: "—"}\n\n" +
+                        "اطلاعات GitHub با اطلاعات فعلی ادغام می‌شود: سفارش‌های جدیدتر جایگزین نسخه‌ی قدیمی‌تر می‌شوند و هیچ داده‌ی محلی حذف نمی‌شود."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    remoteInfo = null
+                    scope.launch {
+                        busy = true
+                        val r = withContext(Dispatchers.IO) { repo.sync.restoreFromGitHub() }
+                        busy = false
+                        lastSync = prefs.ghLastSync
+                        snack.showSnackbar(r.fold({ "${Fmt.toPersianDigits(it.toString())} سفارش بازیابی/ادغام شد" }, { "بازیابی ناموفق: ${it.message}" }))
+                    }
+                }) { Text("بازیابی") }
+            },
+            dismissButton = { TextButton(onClick = { remoteInfo = null }) { Text("انصراف") } },
+        )
+    }
+
+    // ---------------------------------------------------------------- ZIP import confirm
     pendingImport?.let { (uri, info) ->
         val date = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US).format(Date(info.createdAt))
         AlertDialog(
@@ -180,7 +301,7 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                         val r = withContext(Dispatchers.IO) { Backup.import(repo, uri) }
                         busy = false
                         r.fold({
-                            token = prefs.botToken; chat = prefs.chatId; worker = prefs.workerUrl; lang = prefs.telegramLang; auto = prefs.autoSend; ghRepo = prefs.ghRepo
+                            lang = prefs.telegramLang; auto = prefs.autoSend; ghRepo = prefs.ghRepo; tgConfigured = prefs.tgConfigured
                             snack.showSnackbar("بازیابی کامل شد")
                         }, { snack.showSnackbar("بازیابی ناموفق: ${it.message}") })
                     }
@@ -188,5 +309,21 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
             },
             dismissButton = { TextButton(onClick = { pendingImport = null }) { Text("انصراف") } },
         )
+    }
+}
+
+/** Verifies the saved GitHub settings and reports whether the repository is private. */
+private suspend fun testGitHub(prefs: ir.kavir.ordernotebook.data.Prefs): String = withContext(Dispatchers.IO) {
+    try {
+        val i = GitHub(prefs).info()
+        buildString {
+            append("✓ متصل به ${i.fullName}\n")
+            append(if (i.isPrivate) "مخزن Private است ✓" else "⚠ مخزن Public است؛ آپلود اطلاعات مشتریان انجام نخواهد شد. مخزن را Private کنید.")
+            if (!i.canPush) append("\n⚠ توکن اجازه‌ی نوشتن ندارد (Contents: Read and write)")
+        }
+    } catch (e: GitHub.ApiException) {
+        "✗ ${e.message}"
+    } catch (e: IOException) {
+        "✗ خطای اتصال: ${e.message}"
     }
 }

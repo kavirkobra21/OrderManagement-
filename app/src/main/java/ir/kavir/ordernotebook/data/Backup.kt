@@ -5,6 +5,7 @@ import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -17,7 +18,7 @@ import java.util.zip.ZipOutputStream
  */
 object Backup {
     const val FORMAT = "ordernotebook-backup"
-    const val VERSION = 1
+    const val VERSION = 2
 
     data class Info(val version: Int, val createdAt: Long, val customers: Int, val orders: Int, val attachments: Int, val trash: Int)
 
@@ -101,6 +102,7 @@ object Backup {
 
         // swap data
         repo.dao.wipeCustomers() // cascades orders + attachments
+        repo.dao.clearOps()
         repo.attachDir.listFiles()?.forEach { it.delete() }
         staging.listFiles()?.forEach { it.copyTo(File(repo.attachDir, it.name), overwrite = true) }
         repo.dao.putCustomers(customers)
@@ -117,10 +119,12 @@ object Backup {
 
     private fun customerJson(c: Customer) = JSONObject().put("id", c.id).put("name", c.name).put("phone", c.phone)
         .put("address", c.address).put("note", c.note).put("createdAt", c.createdAt).put("deletedAt", c.deletedAt ?: JSONObject.NULL)
+        .put("uid", c.uid).put("updatedAt", c.updatedAt)
 
     private fun customerFrom(j: JSONObject) = Customer(
         j.getLong("id"), j.optString("name"), j.optString("phone"), j.optString("address"), j.optString("note"),
         j.optLong("createdAt"), if (j.isNull("deletedAt")) null else j.getLong("deletedAt"),
+        j.optString("uid").ifBlank { UUID.randomUUID().toString() }, j.optLong("updatedAt", j.optLong("createdAt")),
     )
 
     private fun orderJson(o: Order) = JSONObject().put("id", o.id).put("customerId", o.customerId).put("invoiceNo", o.invoiceNo)
@@ -129,6 +133,9 @@ object Backup {
         .put("stRegistered", o.stRegistered).put("stInProgress", o.stInProgress).put("stReady", o.stReady)
         .put("stDelivered", o.stDelivered).put("paid", o.paid).put("depositReceived", o.depositReceived)
         .put("settled", o.settled).put("createdAt", o.createdAt)
+        .put("uid", o.uid).put("syncNo", o.syncNo).put("updatedAt", o.updatedAt)
+        .put("tgMessageId", o.tgMessageId).put("tgPhotoMessageId", o.tgPhotoMessageId)
+        .put("tgImageHash", o.tgImageHash).put("ghImageHash", o.ghImageHash)
 
     private fun orderFrom(j: JSONObject) = Order(
         id = j.getLong("id"), customerId = j.getLong("customerId"), invoiceNo = j.optString("invoiceNo"),
@@ -137,13 +144,19 @@ object Backup {
         stRegistered = j.optBoolean("stRegistered"), stInProgress = j.optBoolean("stInProgress"), stReady = j.optBoolean("stReady"),
         stDelivered = j.optBoolean("stDelivered"), paid = j.optBoolean("paid"), depositReceived = j.optBoolean("depositReceived"),
         settled = j.optBoolean("settled"), createdAt = j.optLong("createdAt"),
+        uid = j.optString("uid").ifBlank { UUID.randomUUID().toString() }, syncNo = j.optLong("syncNo"),
+        updatedAt = j.optLong("updatedAt", j.optLong("createdAt")),
+        tgMessageId = j.optLong("tgMessageId"), tgPhotoMessageId = j.optLong("tgPhotoMessageId"),
+        tgImageHash = j.optString("tgImageHash"), ghImageHash = j.optString("ghImageHash"),
     )
 
     private fun attJson(a: Attachment) = JSONObject().put("id", a.id).put("customerId", a.customerId)
         .put("orderId", a.orderId ?: JSONObject.NULL).put("type", a.type).put("fileName", a.fileName).put("createdAt", a.createdAt)
+        .put("remotePath", a.remotePath).put("tgSent", a.tgSent)
 
     private fun attFrom(j: JSONObject) = Attachment(
         j.getLong("id"), j.getLong("customerId"), if (j.isNull("orderId")) null else j.getLong("orderId"),
         j.optString("type"), j.getString("fileName"), j.optLong("createdAt"),
+        j.optString("remotePath"), j.optBoolean("tgSent"),
     )
 }
