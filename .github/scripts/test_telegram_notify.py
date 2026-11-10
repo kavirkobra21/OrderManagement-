@@ -288,3 +288,9 @@ class TemplateAndResend(unittest.TestCase):
         with open(self.cfg, "w") as f:
             json.dump({"enabled": True}, f)
         self.assertEqual(tn.main(["--orders", self.orders, "--config", self.cfg, "--resend", "99"]), 1)
+
+    def test_form_aliases_name_and_id(self):
+        o = order(syncNo=5)
+        msg = tn.render_template("{name} | {id} | {phone} | {postal_code} | {address} | #{order_id}", o,
+                                 {"name": "محمدرضا", "contactId": "@Mmd", "phone": "0996", "postalCode": "89", "address": "یزد"}, True)
+        self.assertEqual(msg, "محمدرضا | @Mmd | 0996 | 89 | یزد | #5")

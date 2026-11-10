@@ -113,7 +113,16 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                         prefs.ghRepo = ghRepo; prefs.ghToken = ghToken
                         ghRepo = prefs.ghRepo
                         busy = true; ghStatus = "ذخیره شد؛ در حال بررسی…"
-                        scope.launch { ghStatus = testGitHub(prefs); busy = false; if (prefs.ghConfigured) ghEditing = false }
+                        scope.launch {
+                            ghStatus = testGitHub(prefs)
+                            if (prefs.ghConfigured && !ghStatus.startsWith("✗")) {
+                                // connecting GitHub also creates the folders, the Telegram workflow and its script in the repository
+                                ghStatus += "\nدر حال ساخت Workflow تلگرام در مخزن…"
+                                val steps = ir.kavir.ordernotebook.net.RepoSetup(ctx, prefs).prepare()
+                                ghStatus = ghStatus.substringBefore("\nدر حال") + "\n" + steps.joinToString("\n") { (if (it.ok) "✓ " else "✗ ") + it.title + (if (it.detail.isNotBlank()) " — ${it.detail}" else "") }
+                            }
+                            busy = false; if (prefs.ghConfigured) ghEditing = false
+                        }
                     }) { Text("ذخیره و بررسی") }
                 }
                 if (ghStatus.isNotBlank()) Text(ghStatus)

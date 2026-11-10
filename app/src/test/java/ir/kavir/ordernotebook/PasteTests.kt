@@ -172,4 +172,29 @@ class PasteTests {
         val d = OrderPaste.parse("\u200f5\u200f شمع گلی\n\u200eFlower Candle x7\u200e")
         assertEquals(listOf(5, 7), d.items.map { it.qty })
     }
+
+    @Test fun emojiDecoratedFormFromChat() {
+        val d = OrderPaste.parse("""🧾 فاکتور سفارش ( # )
+
+👤 نام و نام خانوادگی : محمدرضا دشتی
+📦 آدرس دقیق : استان یزد،یزد،چهاراه بعثت،کوچه خیاط
+پلاک6
+📬 کد پستی : 8918933566
+📞 شماره تلفن : 09962796002
+📱 ایدی تلگرام : @MmdKavir85
+──────────────────
+📦 محصولات:
+3 شمع یخی
+شمع گلی 2
+شمع میزویی 3
+4 شمع نیگری
+5 شمع معمولی""")
+        assertEquals("محمدرضا دشتی", d.name)
+        assertEquals("09962796002", d.phone)
+        assertEquals("@MmdKavir85", d.contactId)
+        assertEquals("8918933566", d.postalCode)
+        assertEquals("استان یزد،یزد،چهاراه بعثت،کوچه خیاط پلاک6", d.address)
+        assertEquals(listOf("شمع یخی", "شمع گلی", "شمع میزویی", "شمع نیگری", "شمع معمولی"), d.items.map { it.name })
+        assertEquals(listOf(3, 2, 3, 4, 5), d.items.map { it.qty })
+    }
 }

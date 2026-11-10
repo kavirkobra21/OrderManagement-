@@ -6,7 +6,7 @@ package ir.kavir.ordernotebook.util
  */
 object TelegramTemplate {
     val PLACEHOLDERS: List<Pair<String, String>> = listOf(
-        "order_id" to "شماره/شناسه سفارش", "customer_name" to "نام مشتری", "items" to "آیتم‌ها با قیمت",
+        "order_id" to "شماره/شناسه سفارش", "name" to "نام مشتری", "id" to "آیدی تلگرام/دیسکورد", "customer_name" to "نام مشتری", "items" to "آیتم‌ها با قیمت",
         "total_price" to "هزینه کل", "status" to "وضعیت سفارش و پرداخت", "created_at" to "تاریخ ثبت",
         "description" to "توضیحات", "notes" to "نکات سفارش", "quantity" to "تعداد", "phone" to "شماره تماس",
         "address" to "آدرس", "customer_id" to "آیدی مشتری", "postal_code" to "کد پستی", "invoice" to "شماره فاکتور",
@@ -20,7 +20,7 @@ object TelegramTemplate {
         "(بیعانه): {deposit}\n(باقیمانده): {remaining}\n\n(وضعیت): {status}"
 
     fun sample(): Map<String, String> = mapOf(
-        "order_id" to "12", "customer_name" to "علی رضایی 🌹", "items" to "- 🕯️ شمع گلی ×5 — 250,000 تومان\n- ❄️ شمع یخی ×2 — 80,000 تومان",
+        "order_id" to "12", "name" to "علی رضایی 🌹", "id" to "@ali_r", "customer_name" to "علی رضایی 🌹", "items" to "- 🕯️ شمع گلی ×5 — 250,000 تومان\n- ❄️ شمع یخی ×2 — 80,000 تومان",
         "total_price" to "330,000 تومان", "status" to "ثبت شده / پرداخت نشده", "created_at" to Fmt.todayJalali(),
         "description" to "تحویل صبح", "notes" to "", "quantity" to "7", "phone" to "09121234567", "address" to "تهران",
         "customer_id" to "@ali_r", "postal_code" to "1234567890", "invoice" to "12", "delivery" to "", "items_total" to "330,000 تومان",

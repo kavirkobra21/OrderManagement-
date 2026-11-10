@@ -40,10 +40,15 @@ class RepoSetup(private val ctx: Context, private val prefs: Prefs) {
         return true
     }
 
-    suspend fun run(botToken: String, chatId: String): List<Step> = withContext(Dispatchers.IO) {
+    /** Runs when GitHub is connected: builds the repo structure + Telegram workflow and script (no secrets involved yet). */
+    suspend fun prepare(): List<Step> = setup(null, null)
+
+    suspend fun run(botToken: String, chatId: String): List<Step> = setup(botToken, chatId)
+
+    private suspend fun setup(botToken: String?, chatId: String?): List<Step> = withContext(Dispatchers.IO) {
         val steps = mutableListOf<Step>()
         fun fail(t: String, d: String): List<Step> { steps += Step(t, false, d); return steps }
-        validateInput(botToken, chatId)?.let { return@withContext fail("بررسی ورودی", it) }
+        if (botToken != null && chatId != null) validateInput(botToken, chatId)?.let { return@withContext fail("بررسی ورودی", it) }
         if (!prefs.ghConfigured) return@withContext fail("اتصال GitHub", "ابتدا توکن و مخزن GitHub را در بخش اتصال وارد کنید")
         val api = GitHub(prefs)
         try {
@@ -72,6 +77,7 @@ class RepoSetup(private val ctx: Context, private val prefs: Prefs) {
             putIfChanged(api, "config/notify.json", cfg, "Config: Telegram notifications")
             steps += Step("Workflow و اسکریپت تلگرام", true, if (wf || sc) "ساخته/به‌روز شد" else "از قبل به‌روز بود")
 
+            if (botToken == null || chatId == null) return@withContext steps // connection only: secrets come later from Telegram Settings
             // 3) secrets
             api.putSecret(SECRET_TOKEN, botToken.trim())
             api.putSecret(SECRET_CHAT, chatId.trim())

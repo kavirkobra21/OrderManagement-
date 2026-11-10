@@ -28,14 +28,14 @@ object OrderPaste {
     private const val ZW = "\\u200c\\s"
     private val labels: List<Pair<Key, Regex>> = listOf(
         Key.NOTES to "[Nn]otes?|نکات(?:[$ZW]*سفارش)?|توضیحات(?:[$ZW]*سفارش)?|توضیح|یادداشت",
-        Key.ADDRESS to "آدرس|نشانی|[Aa]ddress",
+        Key.ADDRESS to "آدرس(?:[$ZW]*دقیق)?|نشانی|[Aa]ddress",
         Key.ITEMS to "[Ii]tems?|[Pp]roducts?|آیتم[$ZW]*ها|آیتم|اقلام|سفارش[$ZW]*ها|سفارشات|محصولات|لیست[$ZW]*سفارش",
         Key.POSTAL to "کد[$ZW]*پستی|کدپستی|پستی|[Pp]ostal[$ZW]*[Cc]ode",
         Key.QTY to "تعداد(?:[$ZW]*سفارش)?|[Qq]uantity|[Qq]ty",
-        Key.ID to "آی[$ZW]*دی(?:[$ZW]*تلگرام|[$ZW]*دیسکورد)?|ایدی|[Ii][Dd]|تلگرام|دیسکورد|[Tt]elegram|[Dd]iscord",
+        Key.ID to "آی[$ZW]*دی(?:[$ZW]*تلگرام|[$ZW]*دیسکورد)?|ایدی(?:[$ZW]*تلگرام|[$ZW]*دیسکورد)?|[Ii][Dd]|تلگرام|دیسکورد|[Tt]elegram|[Dd]iscord",
         Key.PHONE to "[Pp]hone(?:[$ZW]*[Nn]umber)?|[Mm]obile|شماره[$ZW]*تماس|شماره[$ZW]*تلفن|شماره[$ZW]*موبایل|شماره[$ZW]*همراه|تلفن[$ZW]*همراه|تلفن|موبایل|همراه|تماس|شماره",
         Key.NAME to "[Cc]ustomer[$ZW]*[Nn]ame|[Nn]ame|نام[$ZW]*و[$ZW]*نام[$ZW]*خانوادگی|نام(?:[$ZW]*مشتری)?|اسم(?:[$ZW]*مشتری)?|مشتری",
-    ).map { (k, p) -> k to Regex("^\\s*(?:[-•*▪●]\\s*)?(?:$p)\\s*$SEP\\s*(.*)$") }
+    ).map { (k, p) -> k to Regex("^[^\\p{L}\\p{N}\\n]*(?:$p)\\s*$SEP\\s*(.*)$") }
 
     private val numbering = Regex("^\\s*(?:[0-9۰-۹٠-٩]+\\s*[.\\-)\\]/:：،]|[-•*–—▪●○]+)\\s*")
     private val startsNumbered = Regex("^\\s*[0-9۰-۹٠-٩]+\\s*[.\\-)\\]/:：،]")
@@ -44,6 +44,8 @@ object OrderPaste {
     /** "5 شمع گلی", "5x شمع", "5 عدد شمع": quantity BEFORE the product name (needs whitespace after the number) */
     private val qtyLead = Regex("^([0-9۰-۹٠-٩]{1,3})\\s*(?:عدد|تا|[x×*])?\\s+(.+)$", RegexOption.IGNORE_CASE)
     /** "شمع گلی 5", "Flower Candle 7": bare trailing number, only when it is the single number of the line (see parseItem) */
+    /** decorative divider lines such as ────── or ====== are never products */
+    private val separatorOnly = Regex("^[─━—–=_*~•.\\-\\s]+$")
     private val qtyBare = Regex("^(.*\\p{L}.*?)\\s+([0-9۰-۹٠-٩]{1,2})$")
     private val anyDigit = Regex("[0-9۰-۹٠-٩]")
     private val mobile = Regex("(?:\\+98|0098|98)?0?(9\\d{9})")
@@ -145,7 +147,7 @@ object OrderPaste {
 
     private fun parseItem(line: String): PasteItem? {
         var t = numbering.replaceFirst(line, "").trim()
-        if (t.isEmpty()) return null
+        if (t.isEmpty() || separatorOnly.matches(t)) return null
         var qty = 1
         val m = qtyX.matchEntire(t) ?: qtyWord.matchEntire(t)
         val lead = qtyLead.matchEntire(t)

@@ -152,6 +152,7 @@ def template_values(o, c, fa=True):
     items = o.get("items", [])
     items_sum = sum(int(i.get("price") or 0) * int(i.get("qty") or 1) for i in items)
     return {
+        "name": c.get("name", ""), "id": c.get("contactId", ""),
         "order_id": str(o.get("syncNo", "")), "customer_name": c.get("name", ""), "items": "\n".join(item_lines(o, fa)),
         "total_price": money(o.get("total"), fa), "status": f"{order_status(o, fa)} / {pay_status(o, fa)}",
         "created_at": o.get("dateText", ""), "description": (o.get("description") or "").strip(),
