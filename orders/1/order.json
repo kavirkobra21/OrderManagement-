@@ -12,34 +12,34 @@
     {
       "title": "نیگا",
       "qty": 1,
-      "price": 0
+      "price": 10000
     },
     {
       "title": "اسب",
       "qty": 1,
-      "price": 0
+      "price": 20000
     },
     {
       "title": "نرگس",
       "qty": 1,
-      "price": 0
+      "price": 30000
     }
   ],
   "quantity": 1,
-  "total": 0,
+  "total": 60000,
   "deposit": 0,
   "remaining": 0,
   "status": {
     "registered": true,
-    "inProgress": false,
-    "ready": false,
-    "delivered": false,
-    "paid": false,
-    "depositReceived": false,
-    "settled": false
+    "inProgress": true,
+    "ready": true,
+    "delivered": true,
+    "paid": true,
+    "depositReceived": true,
+    "settled": true
   },
   "createdAt": 1794322096667,
-  "updatedAt": 1794322096667,
+  "updatedAt": 1794322120538,
   "telegram": {
     "messageId": 0,
     "photoMessageId": 0,
