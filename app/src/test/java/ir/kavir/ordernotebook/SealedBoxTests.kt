@@ -63,3 +63,15 @@ class FormTemplateTests {
         assertEquals(listOf("لوگو", "بنر"), d.items.map { it.name })
     }
 }
+
+class TelegramTemplateTests {
+    @Test fun unknownAndEmptyDisappearEmojiStays() {
+        val out = ir.kavir.ordernotebook.util.TelegramTemplate.render("🧾 #{order_id} {customer_name} {nope}\n{items}", mapOf("order_id" to "5", "customer_name" to "علی 🌹", "items" to "x"))
+        assertEquals("🧾 #5 علی 🌹 \nx", out)
+    }
+
+    @Test fun previewHasNoRawPlaceholders() {
+        val t = ir.kavir.ordernotebook.util.TelegramTemplate
+        assertTrue(!t.render(t.DEFAULT_TEXT, t.sample()).contains("{"))
+    }
+}

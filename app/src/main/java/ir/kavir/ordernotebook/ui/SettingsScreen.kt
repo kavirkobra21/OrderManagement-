@@ -38,6 +38,7 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
     // ---- Telegram
     var showTg by remember { mutableStateOf(false) }
     var showForm by remember { mutableStateOf(false) }
+    var showTpl by remember { mutableStateOf(false) }
 
     // ---- GitHub connection (entered once, stored encrypted)
     var ghEditing by remember { mutableStateOf(!prefs.ghConfigured) }
@@ -88,6 +89,7 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                 )
                 Button(onClick = { showTg = true }, Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) { Text("Telegram Settings") }
                 OutlinedButton(onClick = { showForm = true }, Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) { Text("ویرایش متن سفارش") }
+                OutlinedButton(onClick = { showTpl = true }, Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) { Text("قالب پیام تلگرام") }
             }
 
             // ============================================================ GitHub connection
@@ -255,7 +257,7 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                             status = withContext(Dispatchers.IO) {
                                 try {
                                     val api = GitHub(prefs)
-                                    api.dispatch("telegram.yml", api.info().defaultBranch, mapOf("test" to "true"))
+                                    api.dispatch(ir.kavir.ordernotebook.net.RepoSetup.WORKFLOW_FILE, api.info().defaultBranch, mapOf("test" to "true"))
                                     "✓ درخواست ثبت شد؛ تا حدود یک دقیقه‌ی دیگر پیام آزمایشی در تلگرام می‌آید. اگر نیامد، تب Actions مخزن را ببینید."
                                 } catch (e: GitHub.ApiException) { "✗ ${e.message}" }
                                 catch (e: IOException) { "✗ خطای اتصال: ${e.message}" }
@@ -263,6 +265,24 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                             working = false
                         }
                     }, modifier = Modifier.fillMaxWidth()) { Text("Test Connection") }
+                    OutlinedButton(enabled = !working && prefs.ghConfigured, onClick = {
+                        working = true; status = "در حال خواندن وضعیت…"
+                        scope.launch {
+                            status = withContext(Dispatchers.IO) {
+                                try {
+                                    val r = GitHub(prefs).latestRun(ir.kavir.ordernotebook.net.RepoSetup.WORKFLOW_FILE)
+                                    if (r == null) "هنوز اجرایی ثبت نشده است"
+                                    else "آخرین اجرا: " + when {
+                                        r.status != "completed" -> "در حال اجرا (${r.status})"
+                                        r.conclusion == "success" -> "✓ موفق"
+                                        else -> "✗ ${r.conclusion ?: "ناموفق"} — جزئیات: ${r.url}"
+                                    }
+                                } catch (e: GitHub.ApiException) { "✗ ${e.message}" }
+                                catch (e: IOException) { "✗ خطای اتصال: ${e.message}" }
+                            }
+                            working = false
+                        }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("وضعیت آخرین اجرای Action") }
                     if (!prefs.ghConfigured) Text("ابتدا اتصال GitHub را تنظیم کنید.", style = MaterialTheme.typography.bodySmall)
                     steps.forEach { Text((if (it.ok) "✓ " else "✗ ") + it.title + (if (it.detail.isNotBlank()) " — ${it.detail}" else ""), style = MaterialTheme.typography.bodySmall) }
                     if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodySmall)
@@ -276,6 +296,44 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                 }) { Text("Save Settings") }
             },
             dismissButton = { TextButton(enabled = !working, onClick = { showTg = false }) { Text("بستن") } },
+        )
+    }
+
+    // ---------------------------------------------------------------- Telegram message template dialog
+    if (showTpl) {
+        val tt = ir.kavir.ordernotebook.util.TelegramTemplate
+        var text by remember { mutableStateOf(prefs.telegramTemplate.ifBlank { tt.DEFAULT_TEXT }) }
+        var preview by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { showTpl = false },
+            title = { Text("قالب پیام تلگرام") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!preview) {
+                        Field("متن پیام (فارسی، انگلیسی، عدد، ایموجی، چند خط)", text, { text = it }, singleLine = false, minLines = 8)
+                        Text("متغیرهای پشتیبانی‌شده (برای افزودن بزنید):", style = MaterialTheme.typography.bodySmall)
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            tt.PLACEHOLDERS.forEach { (k, d) ->
+                                AssistChip(onClick = { text = text + "{$k}" }, label = { Text("{$k} · $d", style = MaterialTheme.typography.labelSmall) })
+                            }
+                        }
+                        Text("متغیر خالی یا ناشناخته در پیام نهایی نمایش داده نمی‌شود. با ذخیره، پیام‌های قبلی سفارش‌ها هم با همین قالب ویرایش می‌شوند.", style = MaterialTheme.typography.bodySmall)
+                    } else Text(tt.render(text, tt.sample()))
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    prefs.telegramTemplate = if (text.isBlank() || text == tt.DEFAULT_TEXT) "" else text
+                    showTpl = false
+                    scope.launch { repo.enqueueConfig(); snack.showSnackbar("قالب پیام تلگرام ذخیره شد") }
+                }) { Text("ذخیره") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { preview = !preview }) { Text(if (preview) "ویرایش" else "پیش‌نمایش") }
+                    TextButton(onClick = { text = tt.DEFAULT_TEXT }) { Text("بازگردانی پیش‌فرض") }
+                }
+            },
         )
     }
 

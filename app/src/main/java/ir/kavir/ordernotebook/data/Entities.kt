@@ -100,6 +100,8 @@ data class PendingOp(
 object OpKind {
     const val GITHUB = "GH"
     const val TELEGRAM = "TG"
+    /** delete Order/orders/<orderId> (orderId = folder number) from GitHub after a permanent delete */
+    const val GH_DELETE = "GHDEL"
 }
 
 data class OrderItem(val title: String, val qty: Int, val price: Long) {

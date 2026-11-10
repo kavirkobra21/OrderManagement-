@@ -79,4 +79,71 @@ class PasteTests {
         assertTrue(d.items.isEmpty())
         OrderPaste.parse("::::\n\n   \n1.\n-")
     }
+
+    @Test fun quantityLineBelongsToItsProduct() {
+        val d = OrderPaste.parse("Ice Candle\nQuantity: 2")
+        assertEquals(listOf("Ice Candle"), d.items.map { it.name })
+        assertEquals(listOf(2), d.items.map { it.qty })
+        assertEquals(2, d.quantity)
+    }
+
+    @Test fun multipleProductsKeepTheirOwnQuantities() {
+        val d = OrderPaste.parse("Ice Candle\nQuantity: 2\n\nFire Lamp\nQuantity: 5\nWood Box")
+        assertEquals(listOf("Ice Candle", "Fire Lamp", "Wood Box"), d.items.map { it.name })
+        assertEquals(listOf(2, 5, 1), d.items.map { it.qty })
+    }
+
+    @Test fun labeledItemsBlockWithPersianQuantityLines() {
+        val d = OrderPaste.parse("نام مشتری: علی\nآیتم‌ها:\n1. شمع یخی\nتعداد: ۳\n2. چراغ\nتعداد: 2 عدد\n3. جعبه")
+        assertEquals("علی", d.name)
+        assertEquals(listOf("شمع یخی", "چراغ", "جعبه"), d.items.map { it.name })
+        assertEquals(listOf(3, 2, 1), d.items.map { it.qty })
+    }
+
+    @Test fun quantityAfterNameLabelIsNotPartOfTheName() {
+        val d = OrderPaste.parse("Name: Ali\nIce Candle\nQuantity: 4")
+        assertEquals("Ali", d.name)
+        assertEquals(listOf("Ice Candle"), d.items.map { it.name })
+        assertEquals(listOf(4), d.items.map { it.qty })
+    }
+
+    @Test fun missingQuantityDefaultsToOne() {
+        val d = OrderPaste.parse("آیتم‌ها:\n1. لوگو")
+        assertEquals(listOf(1), d.items.map { it.qty })
+    }
+
+    @Test fun quantityBeforeProductName() {
+        val d = OrderPaste.parse("5 شمع گلی\n2 شمع یخی\n3 گل رز")
+        assertEquals(listOf("شمع گلی", "شمع یخی", "گل رز"), d.items.map { it.name })
+        assertEquals(listOf(5, 2, 3), d.items.map { it.qty })
+    }
+
+    @Test fun quantityAfterProductNameAllDigitSystems() {
+        val d = OrderPaste.parse("شمع گلی × 5\nشمع یخی x ۲\nگل رز ×٣")
+        assertEquals(listOf("شمع گلی", "شمع یخی", "گل رز"), d.items.map { it.name })
+        assertEquals(listOf(5, 2, 3), d.items.map { it.qty })
+    }
+
+    @Test fun persianAndArabicDigitsBeforeName() {
+        val d = OrderPaste.parse("۵ شمع گلی\n٢ عدد شمع یخی")
+        assertEquals(listOf(5, 2), d.items.map { it.qty })
+        assertEquals(listOf("شمع گلی", "شمع یخی"), d.items.map { it.name })
+    }
+
+    @Test fun emojisSurviveInNamesAndQuantitiesAreStillFound() {
+        val d = OrderPaste.parse("5 🕯️ شمع گلی\n2 🌹 گل رز\n3 ❄️ شمع یخی\n1 👨‍👩‍👧 خانواده 🇮🇷 👍🏽")
+        assertEquals(listOf("🕯️ شمع گلی", "🌹 گل رز", "❄️ شمع یخی", "👨‍👩‍👧 خانواده 🇮🇷 👍🏽"), d.items.map { it.name })
+        assertEquals(listOf(5, 2, 3, 1), d.items.map { it.qty })
+    }
+
+    @Test fun emojiInLabeledFieldsIsKept() {
+        val d = OrderPaste.parse("نام مشتری: علی 🌹\nنکات سفارش: زود برسه ⚡\nآیتم‌ها:\n1. 🕯️ شمع × 2")
+        assertEquals("علی 🌹", d.name); assertEquals("زود برسه ⚡", d.notes)
+        assertEquals("🕯️ شمع", d.items.single().name); assertEquals(2, d.items.single().qty)
+    }
+
+    @Test fun numberAtBothEndsIsAmbiguousAndNotGuessed() {
+        val d = OrderPaste.parse("5 شمع × 2")
+        assertEquals("5 شمع × 2", d.items.single().name); assertEquals(1, d.items.single().qty)
+    }
 }

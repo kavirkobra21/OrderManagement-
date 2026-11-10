@@ -234,3 +234,57 @@ class Config(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TemplateAndResend(unittest.TestCase):
+    def setUp(self):
+        REQUESTS.clear(); SCRIPT.clear()
+        self.root = tempfile.mkdtemp()
+        self.orders = os.path.join(self.root, "Order", "orders")
+        self.folder = os.path.join(self.orders, "5")
+        os.makedirs(self.folder)
+        with open(os.path.join(self.folder, "order.json"), "w", encoding="utf-8") as f:
+            json.dump(order(syncNo=5, description="🕯️ توضیح"), f, ensure_ascii=False)
+        with open(os.path.join(self.folder, "customer.json"), "w", encoding="utf-8") as f:
+            json.dump({"name": "علی 🌹", "phone": "0912"}, f, ensure_ascii=False)
+        self.cfg = os.path.join(self.root, "notify.json")
+        self.tg = tn.Telegram("T", "55")
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def state(self):
+        with open(os.path.join(self.folder, "telegram.json"), encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_custom_template_keeps_emoji_and_drops_unknown(self):
+        o = order(syncNo=5, description="🕯️ توضیح")
+        msg = tn.message_for(o, {"name": "علی 🌹"}, True, "🧾 #{order_id} {customer_name}\n{items}\n{nope}\nجمع: {total_price}")
+        self.assertIn("🧾 #5 علی 🌹", msg)
+        self.assertNotIn("{", msg)
+        self.assertIn("- طراحی لوگو — 100,000 تومان", msg)
+
+    def test_empty_template_is_default_format(self):
+        o = order(syncNo=5)
+        self.assertEqual(tn.message_for(o, {"name": "A"}, True, ""), tn.build_message(o, {"name": "A"}, True))
+
+    def test_resend_makes_a_new_message_and_stores_chat(self):
+        self.assertTrue(tn.process_order(self.tg, self.folder, True, "5", "", False, "55"))
+        first = self.state()
+        self.assertEqual(first["chatId"], "55")
+        n = methods().count("sendMessage")
+        self.assertTrue(tn.process_order(self.tg, self.folder, True, "5", "", True, "55"))
+        self.assertEqual(methods().count("sendMessage"), n + 1)          # NEW message, not an edit
+        self.assertNotEqual(self.state()["messageId"], first["messageId"])
+
+    def test_template_change_edits_same_message(self):
+        tn.process_order(self.tg, self.folder, True, "5", "", False, "55")
+        mid = self.state()["messageId"]
+        tn.process_order(self.tg, self.folder, True, "5", "نسخه جدید {customer_name}", False, "55")
+        self.assertIn("editMessageText", methods())
+        self.assertEqual(self.state()["messageId"], mid)
+
+    def test_main_resend_unknown_order_fails(self):
+        with open(self.cfg, "w") as f:
+            json.dump({"enabled": True}, f)
+        self.assertEqual(tn.main(["--orders", self.orders, "--config", self.cfg, "--resend", "99"]), 1)

@@ -35,13 +35,13 @@ class Updater(private val ctx: Context, private val prefs: Prefs) {
 
     fun check(): Check {
       return try {
-        val repo = prefs.ghRepo
+        val repo = prefs.updateRepo
         if (!repo.matches(Regex("[\\w.-]+/[\\w.-]+"))) return Check.Error("نام Repository باید به شکل owner/repo باشد")
         val c = open("https://api.github.com/repos/$repo/releases/latest", "application/vnd.github+json")
         val code = c.responseCode
         val text = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.readText().orEmpty()
         when {
-            code == 404 -> Check.Error("هنوز Release منتشر نشده یا دسترسی (Token) کافی نیست")
+            code == 404 -> Check.Error("در $repo هنوز Release منتشر نشده یا توکن به این مخزن دسترسی ندارد (Contents: Read)")
             code == 401 -> Check.Error("GitHub Token نامعتبر است")
             code == 403 -> Check.Error("دسترسی رد شد یا محدودیت تعداد درخواست GitHub")
             code !in 200..299 -> Check.Error("خطای GitHub ($code)")

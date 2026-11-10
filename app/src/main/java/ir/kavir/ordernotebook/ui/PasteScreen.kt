@@ -42,18 +42,18 @@ fun PasteOrderScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
     var contactId by remember { mutableStateOf("") }
     var postal by remember { mutableStateOf("") }
     var quantity by remember { mutableStateOf("1") }
-    var items by remember { mutableStateOf(listOf<OrderItem>()) }
+    var items by remember { mutableStateOf(listOf<ItemRow>()) }
     var busy by remember { mutableStateOf(false) }
 
     fun parseNow(text: String) {
         val d = OrderPaste.parse(text)
         name = d.name; phone = d.phone; address = d.address; notes = d.notes
         contactId = d.contactId; postal = d.postalCode; quantity = d.quantity.toString()
-        items = d.items.map { OrderItem(it.name, it.qty, 0) }.ifEmpty { listOf(OrderItem("", 1, 0)) }
+        items = d.items.map { ItemRow(it.name, it.qty.toString(), 0) }.ifEmpty { listOf(ItemRow.blank()) }
         parsed = true
     }
 
-    val total = items.sumOf { it.price * it.qty }
+    val total = items.sumOf { it.price * it.q }
 
     Column(Modifier.fillMaxSize()) {
         TopBar("ورود سفارش با Paste", onBack = { nav.back() })
@@ -83,7 +83,7 @@ fun PasteOrderScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                     Field("شماره تماس", phone, { phone = Fmt.toLatinDigits(it) }, keyboard = KeyboardOptions(keyboardType = KeyboardType.Phone))
                     Field("آیدی", contactId, { contactId = it })
                     Field("کد پستی", postal, { postal = Fmt.toLatinDigits(it).filter { ch -> ch.isDigit() }.take(10) }, keyboard = KeyboardOptions(keyboardType = KeyboardType.Number))
-                    Field("تعداد", quantity, { quantity = Fmt.toLatinDigits(it).filter { ch -> ch.isDigit() }.take(4) }, keyboard = KeyboardOptions(keyboardType = KeyboardType.Number))
+                    QtyField(quantity, { quantity = it })
                     Field("آدرس", address, { address = it }, singleLine = false, minLines = 2)
                     Field("نکات سفارش", notes, { notes = it }, singleLine = false, minLines = 2)
                 }
@@ -95,19 +95,18 @@ fun PasteOrderScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                                 IconButton(onClick = { items = items.toMutableList().also { l -> l.removeAt(i) } }) { Icon(Icons.Filled.Close, "حذف آیتم") }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Field("تعداد", it.qty.toString(), { v -> items = items.toMutableList().also { l -> l[i] = it.copy(qty = Fmt.parseMoney(v).toInt().coerceAtLeast(1)) } },
-                                    Modifier.width(84.dp), keyboard = KeyboardOptions(keyboardType = KeyboardType.Number))
+                                QtyField(it.qty, { v -> items = items.toMutableList().also { l -> l[i] = it.copy(qty = v) } }, Modifier.width(96.dp))
                                 MoneyField("قیمت هر یک", if (it.price > 0) it.price.toString() else "",
                                     { v -> items = items.toMutableList().also { l -> l[i] = it.copy(price = Fmt.parseMoney(v)) } }, Modifier.weight(1f))
                             }
                         }
                         HorizontalDivider()
                     }
-                    OutlinedButton(onClick = { items = items + OrderItem("", 1, 0) }) { Text("+ آیتم") }
+                    OutlinedButton(onClick = { items = items + ItemRow.blank() }) { Text("+ آیتم") }
                     Text("جمع آیتم‌ها: ${Fmt.toman(total)}", style = MaterialTheme.typography.titleMedium)
                 }
                 Button(
-                    enabled = !busy && name.isNotBlank(),
+                    enabled = !busy && name.isNotBlank() && quantity.toIntOrNull()?.let { it > 0 } == true && items.all { it.qtyValid },
                     onClick = {
                         scope.launch {
                             busy = true
@@ -116,7 +115,7 @@ fun PasteOrderScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                             val existing = if (ph.isBlank()) null
                             else repo.dao.allCustomers().firstOrNull { it.deletedAt == null && Fmt.toLatinDigits(it.phone) == ph }
                             val cid = existing?.id ?: repo.saveCustomer(Customer(name = name.trim(), phone = ph, address = address.trim(), contactId = contactId.trim(), postalCode = postal))
-                            val clean = items.filter { it.title.isNotBlank() }
+                            val clean = items.filter { it.title.isNotBlank() }.map { it.toItem() }
                             val invoice = Fmt.toPersianDigits((repo.prefs.invoiceCounter + 1).toString())
                             val oid = repo.saveOrder(
                                 Order(

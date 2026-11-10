@@ -39,7 +39,7 @@ class SyncException(message: String) : Exception(message)
  * available; jobs that fail stay queued. A mutex guarantees a single worker, and unchanged files are
  * detected by git blob SHA, so nothing is uploaded or sent twice.
  *
- * GitHub layout:  orders/<n>/{order.json, customer.json, order_image.png, payment_receipt.<ext>, images/ (folder)}
+ * GitHub layout:  Order/orders/<n>/{order.json, customer.json, order_image.png, payment_receipt.<ext>, images/ (folder)}
  */
 class SyncManager(private val repo: Repo) {
     private val ctx = repo.ctx
@@ -53,6 +53,10 @@ class SyncManager(private val repo: Repo) {
     companion object {
         /** pending_ops.orderId marker for "push config/notify.json" */
         const val CONFIG_OP = 0L
+
+        /** GitHub folder of the orders (Order/orders/<n>/); the old root-level orders/ is still readable on restore */
+        const val ORDERS = "Order/orders"
+        const val LEGACY_ORDERS = "orders"
     }
 
     private val _syncing = MutableStateFlow(false)
@@ -105,6 +109,7 @@ class SyncManager(private val repo: Repo) {
                     try {
                         when (op.kind) {
                             OpKind.GITHUB -> if (op.orderId == CONFIG_OP) pushConfig() else pushOrder(op.orderId)
+                            OpKind.GH_DELETE -> deleteRemote(op.orderId)
                             else -> Unit // legacy in-app Telegram jobs: delivery is done by the GitHub Action now
                         }
                         dao.deleteOp(op.id)
@@ -158,10 +163,10 @@ class SyncManager(private val repo: Repo) {
         ensurePrivate(api)
 
         // ---- folder number (incremental, no duplicates)
-        val dirs = api.list("orders").filter { it.type == "dir" }.mapNotNull { it.name.toLongOrNull() }
+        val dirs = api.list(ORDERS).filter { it.type == "dir" }.mapNotNull { it.name.toLongOrNull() }
         var no = o0.syncNo
         if (no != 0L && no in dirs) {
-            val remote = api.getText("orders/$no/order.json")?.let { parseOrFail(it) }
+            val remote = api.getText("$ORDERS/$no/order.json")?.let { parseOrFail(it) }
             val ruid = remote?.optString("uid").orEmpty()
             if (remote != null && ruid.isNotBlank() && ruid != o0.uid) no = 0 // number taken by another order
             else if (remote != null && ruid == o0.uid && remote.optLong("updatedAt") > o0.updatedAt) {
@@ -175,7 +180,7 @@ class SyncManager(private val repo: Repo) {
             dao.setSyncNo(o0.id, no)
         }
         val o = dao.order(orderId) ?: return
-        val base = "orders/$no"
+        val base = "$ORDERS/$no"
 
         val root = api.list(base)
         val imgs = api.list("$base/images")
@@ -228,9 +233,21 @@ class SyncManager(private val repo: Repo) {
         if (!prefs.ghConfigured) return
         val api = GitHub(prefs)
         ensurePrivate(api)
-        val bytes = JSONObject().put("enabled", prefs.autoSend).put("lang", prefs.telegramLang)
+        val bytes = JSONObject().put("enabled", prefs.autoSend).put("lang", prefs.telegramLang).put("template", prefs.telegramTemplate)
             .toString(2).toByteArray(Charsets.UTF_8)
         putIfChanged(api, "config/notify.json", bytes, api.sha("config/notify.json"), "Config: Telegram notifications")
+    }
+
+    /** Removes every file of a permanently deleted order folder (new and legacy layout). Missing folders are fine. */
+    private fun deleteRemote(no: Long) {
+        if (!prefs.ghConfigured || no <= 0) return
+        val api = GitHub(prefs)
+        ensurePrivate(api)
+        for (root in listOf(ORDERS, LEGACY_ORDERS)) {
+            val base = "$root/$no"
+            val files = api.list(base).flatMap { if (it.type == "dir") api.list(it.path) else listOf(it) }.filter { it.type == "file" }
+            files.forEach { api.delete(it.path, it.sha, "Delete order #$no") }
+        }
     }
 
     private fun putIfChanged(api: GitHub, path: String, bytes: ByteArray, remoteSha: String?, msg: String) {
@@ -273,8 +290,9 @@ class SyncManager(private val repo: Repo) {
     suspend fun remoteInfo(): Result<RemoteInfo> = mutex.withLock {
         try {
             val api = GitHub(prefs)
-            val n = api.list("orders").count { it.type == "dir" && it.name.toLongOrNull() != null }
-            Result.success(RemoteInfo(n, api.lastCommitDate("orders")))
+            val r = ordersRoot(api)
+            val n = api.list(r).count { it.type == "dir" && it.name.toLongOrNull() != null }
+            Result.success(RemoteInfo(n, api.lastCommitDate(r)))
         } catch (e: Exception) { Result.failure(e) }
     }
 
@@ -285,9 +303,11 @@ class SyncManager(private val repo: Repo) {
     suspend fun restoreFromGitHub(): Result<Int> = mutex.withLock {
         try {
             val api = GitHub(prefs)
-            val dirs = api.list("orders").filter { it.type == "dir" }.mapNotNull { it.name.toLongOrNull() }.sorted()
+            val r = ordersRoot(api)
+            val dirs = api.list(r).filter { it.type == "dir" }.mapNotNull { it.name.toLongOrNull() }.sorted()
             var n = 0
-            for (no in dirs) if (mergeFolder(api, no)) n++
+            val deleting = dao.pendingDeletes().toSet() // permanently deleted locally, GitHub copy not removed yet: never bring it back
+            for (no in dirs) if (no !in deleting && mergeFolder(api, no, r)) n++
             // keep invoice numbering ahead of everything restored
             val maxInvoice = dao.allOrders().maxOfOrNull { Fmt.toLatinDigits(it.invoiceNo).toLongOrNull() ?: 0L } ?: 0L
             if (maxInvoice > prefs.invoiceCounter) prefs.invoiceCounter = maxInvoice
@@ -296,9 +316,14 @@ class SyncManager(private val repo: Repo) {
         } catch (e: Exception) { Result.failure(e) }
     }
 
-    /** Applies orders/<no> to the local DB. Returns true if the folder was readable. */
-    private suspend fun mergeFolder(api: GitHub, no: Long): Boolean {
-        val base = "orders/$no"
+    /** Order/orders, or the old root-level orders/ when only that one exists (backward compatible restore). */
+    private fun ordersRoot(api: GitHub): String =
+        if (api.list(ORDERS).any { it.type == "dir" }) ORDERS
+        else if (api.list(LEGACY_ORDERS).any { it.type == "dir" }) LEGACY_ORDERS else ORDERS
+
+    /** Applies <root>/<no> to the local DB. Returns true if the folder was readable. */
+    private suspend fun mergeFolder(api: GitHub, no: Long, root: String = ORDERS): Boolean {
+        val base = "$root/$no"
         val oj = api.getText("$base/order.json")?.let { parseOrFail(it) } ?: return false
         val cj = api.getText("$base/customer.json")?.let { parseOrFail(it) } ?: return false
         val cuid = cj.optString("uid").ifBlank { return false }

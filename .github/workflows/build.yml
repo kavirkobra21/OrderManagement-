@@ -6,6 +6,7 @@ on:
     # the app commits orders/** to this repo (GitHub storage); that must never trigger a build
     paths-ignore:
       - "orders/**"
+      - "Order/**"
       - "config/**"
     tags: ["v*"]
   pull_request:

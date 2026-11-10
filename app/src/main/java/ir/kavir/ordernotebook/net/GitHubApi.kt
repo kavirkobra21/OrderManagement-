@@ -156,6 +156,20 @@ class GitHub(private val prefs: Prefs) {
         throw err(code, resp)
     }
 
+    data class Run(val id: Long, val status: String, val conclusion: String?, val url: String)
+
+    /** Newest run of a workflow (any trigger) or null. Needs Actions: Read. */
+    fun latestRun(workflowFile: String): Run? {
+        val (code, body) = exec("GET", url("actions/workflows/$workflowFile/runs?per_page=1"))
+        if (code == 404) return null
+        if (code == 403) throw ApiException(code, "توکن دسترسی خواندن Actions را ندارد (Actions: Read)")
+        if (code != 200) throw err(code, body)
+        val arr = JSONObject(String(body, Charsets.UTF_8)).optJSONArray("workflow_runs") ?: return null
+        if (arr.length() == 0) return null
+        val r = arr.getJSONObject(0)
+        return Run(r.optLong("id"), r.optString("status"), r.optString("conclusion").ifBlank { null }, r.optString("html_url"))
+    }
+
     /** Creates the (private, empty) repository named in prefs under the token owner's account. Needs a token allowed to create repos. */
     fun createPrivateRepo() {
         val name = prefs.ghRepo.substringAfter('/')

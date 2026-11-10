@@ -88,6 +88,7 @@ interface AppDao {
     @Query("DELETE FROM pending_ops WHERE id = :id") suspend fun deleteOp(id: Long)
     @Query("UPDATE pending_ops SET attempts = attempts + 1, lastError = :e WHERE id = :id") suspend fun failOp(id: Long, e: String)
     @Query("DELETE FROM pending_ops") suspend fun clearOps()
+    @Query("SELECT orderId FROM pending_ops WHERE kind = 'GHDEL'") suspend fun pendingDeletes(): List<Long>
 
     // ---- raw dumps for backup / restore
     @Query("SELECT * FROM customers") suspend fun allCustomers(): List<Customer>

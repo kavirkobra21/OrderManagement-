@@ -30,6 +30,7 @@ import ir.kavir.ordernotebook.data.Customer
 import ir.kavir.ordernotebook.data.Order
 import ir.kavir.ordernotebook.data.OrderItem
 import ir.kavir.ordernotebook.data.Repo
+import ir.kavir.ordernotebook.net.GitHub
 import ir.kavir.ordernotebook.util.Fmt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -45,7 +46,8 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
     var customer by remember { mutableStateOf<Customer?>(null) }
     var order by remember { mutableStateOf(Order(customerId = customerId, dateText = Fmt.todayJalali())) }
     var loaded by remember { mutableStateOf(false) }
-    var items by remember { mutableStateOf(listOf<OrderItem>()) }
+    var items by remember { mutableStateOf(listOf<ItemRow>()) }
+    var qtyS by remember { mutableStateOf("1") }
     var totalS by remember { mutableStateOf("") }
     var depositS by remember { mutableStateOf("") }
     var pendingType by remember { mutableStateOf(AttachmentType.RECEIPT) }
@@ -55,7 +57,7 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
         customer = repo.dao.customer(customerId)
         if (orderId != null) {
             repo.dao.order(orderId)?.let {
-                order = it; items = OrderItem.decode(it.itemsText)
+                order = it; items = OrderItem.decode(it.itemsText).map { x -> ItemRow.of(x) }; qtyS = it.quantity.toString()
                 totalS = if (it.total > 0) it.total.toString() else ""
                 depositS = if (it.deposit > 0) it.deposit.toString() else ""
             }
@@ -77,11 +79,11 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
     }
 
     // The order as currently typed (not yet saved)
-    val live = order.copy(total = Fmt.parseMoney(totalS), deposit = Fmt.parseMoney(depositS), itemsText = OrderItem.encode(items))
+    val live = order.copy(total = Fmt.parseMoney(totalS), deposit = Fmt.parseMoney(depositS), itemsText = OrderItem.encode(items.map { it.toItem() }), quantity = qtyS.toIntOrNull()?.coerceAtLeast(1) ?: order.quantity)
     val data = pageData(live, customer)
 
     // total follows the sum of the item prices whenever an item/price/qty changes (stored as a real number)
-    val itemsSum = items.sumOf { it.price * it.qty }
+    val itemsSum = items.sumOf { it.price * it.q }
     var autoSum by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(itemsSum, loaded) {
         if (loaded) {
@@ -97,6 +99,11 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
     }
 
     suspend fun save(): Order? {
+        // quantities are validated here (not while typing): positive whole numbers only
+        if (!qtyS.let { it.toIntOrNull()?.let { n -> n > 0 } == true } || items.any { !it.qtyValid }) {
+            snack.showSnackbar("تعداد باید یک عدد صحیح بزرگ‌تر از صفر باشد")
+            return null
+        }
         val o = live.copy(
             stRegistered = true,
             // keep status flags consistent with payments
@@ -129,7 +136,7 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
 
             Section("مشخصات سفارش") {
                 Field("تاریخ", order.dateText, { order = order.copy(dateText = it) })
-                Field("تعداد", order.quantity.toString(), { order = order.copy(quantity = Fmt.toLatinDigits(it).filter { ch -> ch.isDigit() }.take(4).toIntOrNull()?.coerceAtLeast(1) ?: 1) }, keyboard = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number))
+                QtyField(qtyS, { qtyS = it })
                 Field("شماره فاکتور", order.invoiceNo, { order = order.copy(invoiceNo = it) })
                 Field("زمان تحویل", order.deliveryText, { order = order.copy(deliveryText = it) })
                 Field("نکات سفارش", order.notes, { order = order.copy(notes = it) }, singleLine = false, minLines = 2)
@@ -145,17 +152,16 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                             IconButton(onClick = { items = items.toMutableList().also { l -> l.removeAt(i) } }) { Icon(Icons.Filled.Close, "حذف آیتم") }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Field("تعداد", it.qty.toString(), { v -> items = items.toMutableList().also { l -> l[i] = it.copy(qty = Fmt.parseMoney(v).toInt().coerceAtLeast(1)) } },
-                                Modifier.width(84.dp), keyboard = KeyboardOptions(keyboardType = KeyboardType.Number))
+                            QtyField(it.qty, { v -> items = items.toMutableList().also { l -> l[i] = it.copy(qty = v) } }, Modifier.width(96.dp))
                             MoneyField("قیمت هر یک", if (it.price > 0) it.price.toString() else "",
                                 { v -> items = items.toMutableList().also { l -> l[i] = it.copy(price = Fmt.parseMoney(v)) } }, Modifier.weight(1f))
                         }
-                        if (it.price > 0 && it.qty > 1) Text("جمع این آیتم: ${Fmt.toman(it.price * it.qty)}", style = MaterialTheme.typography.bodySmall)
+                        if (it.price > 0 && it.q > 1) Text("جمع این آیتم: ${Fmt.toman(it.price * it.q)}", style = MaterialTheme.typography.bodySmall)
                     }
                     HorizontalDivider()
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { items = items + OrderItem("", 1, 0) }) { Text("+ آیتم") }
+                    OutlinedButton(onClick = { items = items + ItemRow.blank() }) { Text("+ آیتم") }
                     OutlinedButton(onClick = { totalS = itemsSum.toString() }, enabled = items.any { it.price > 0 }) { Text("هزینه کل = جمع آیتم‌ها") }
                 }
                 if (items.isNotEmpty()) Text("جمع آیتم‌ها: ${Fmt.toman(itemsSum)}", style = MaterialTheme.typography.titleMedium)
@@ -218,8 +224,8 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                     val vals = ir.kavir.ordernotebook.util.FormTemplate.now() + mapOf(
                         "name" to cust?.name.orEmpty(), "id" to cust?.contactId.orEmpty(), "phone" to cust?.phone.orEmpty(),
                         "postal_code" to cust?.postalCode.orEmpty(), "address" to cust?.address.orEmpty(),
-                        "quantity" to order.quantity.toString(), "order_id" to order.invoiceNo,
-                        "items" to list.joinToString("\n") { "- ${it.title} — ${Fmt.toman(it.price * it.qty)}" },
+                        "quantity" to qtyS, "order_id" to order.invoiceNo,
+                        "items" to list.joinToString("\n") { "- ${it.title} — ${Fmt.toman(it.price * it.q)}" },
                         "total" to Fmt.toman(Fmt.parseMoney(totalS)),
                     )
                     clip.setText(androidx.compose.ui.text.AnnotatedString(ir.kavir.ordernotebook.util.FormTemplate.render(repo.prefs.formTemplate, vals)))
@@ -229,8 +235,7 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                     onClick = {
                         scope.launch {
                             busy = true
-                            save()
-                            snack.showSnackbar(
+                            if (save() != null) snack.showSnackbar(
                                 if (repo.prefs.ghConfigured) "ذخیره شد؛ همگام‌سازی با GitHub در صف است (بدون اینترنت پس از اتصال انجام می‌شود)"
                                 else "ذخیره شد"
                             )
@@ -243,7 +248,7 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                 FilledTonalButton(onClick = {
                     scope.launch {
                         busy = true
-                        val saved = save()!!
+                        val saved = save() ?: run { busy = false; return@launch }
                         val f = renderFile(saved)
                         val ok = saveToGallery(ctx, f, f.name)
                         snack.showSnackbar(if (ok) "تصویر در گالری (Pictures/OrderNotebook) ذخیره شد" else "ذخیره تصویر ناموفق بود")
@@ -254,7 +259,7 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                 FilledTonalButton(onClick = {
                     scope.launch {
                         busy = true
-                        val saved = save()!!
+                        val saved = save() ?: run { busy = false; return@launch }
                         val f = renderFile(saved)
                         shareImage(ctx, f)
                         busy = false
@@ -262,6 +267,56 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                 }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(48.dp)) { Icon(Icons.Filled.Share, null); Spacer(Modifier.width(8.dp)); Text("اشتراک‌گذاری تصویر") }
 
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+
+            Section("تلگرام") {
+                var sending by remember { mutableStateOf(false) }
+                var tgStatus by remember { mutableStateOf("") }
+                Text(
+                    "ویرایش سفارش، همان پیام قبلی تلگرام را ویرایش می‌کند. این دکمه عمداً یک پیام جدید می‌فرستد (توسط GitHub Actions).",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Button(
+                    enabled = !sending && !busy,
+                    onClick = {
+                        if (sending) return@Button
+                        sending = true; tgStatus = "در حال ذخیره و همگام‌سازی…"
+                        scope.launch {
+                            try {
+                                val saved = save() ?: return@launch
+                                if (!repo.prefs.ghConfigured) { tgStatus = "✗ ابتدا اتصال GitHub را در تنظیمات انجام دهید"; return@launch }
+                                repo.sync.process()
+                                val cur = repo.dao.order(saved.id)
+                                if (cur == null || cur.syncNo <= 0 || repo.dao.ops().any { it.kind == ir.kavir.ordernotebook.data.OpKind.GITHUB && it.orderId == saved.id }) {
+                                    tgStatus = "✗ سفارش هنوز در GitHub ذخیره نشده است (اینترنت یا توکن را بررسی کنید)"; return@launch
+                                }
+                                tgStatus = "در حال ارسال درخواست به GitHub Actions…"
+                                tgStatus = withContext(Dispatchers.IO) {
+                                    try {
+                                        val api = GitHub(repo.prefs)
+                                        val wf = ir.kavir.ordernotebook.net.RepoSetup.WORKFLOW_FILE
+                                        val before = api.latestRun(wf)?.id ?: 0L
+                                        api.dispatch(wf, api.info().defaultBranch, mapOf("resend" to cur.syncNo.toString()))
+                                        var res = "درخواست ثبت شد؛ اجرای Action در GitHub را بررسی کنید"
+                                        repeat(24) {
+                                            kotlinx.coroutines.delay(5000)
+                                            val r = api.latestRun(wf)
+                                            if (r != null && r.id != before && r.status == "completed") {
+                                                res = if (r.conclusion == "success") "✓ پیام جدید در تلگرام ارسال شد" else "✗ اجرای Action ناموفق بود (${r.conclusion}): ${r.url}"
+                                                return@withContext res
+                                            }
+                                        }
+                                        res
+                                    } catch (e: GitHub.ApiException) { "✗ ${e.message}" }
+                                    catch (e: java.io.IOException) { "✗ خطای اتصال: ${e.message}" }
+                                }
+                            } finally { sending = false }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(26.dp),
+                ) { Text("Resend to Telegram") }
+                if (sending) LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (tgStatus.isNotBlank()) Text(tgStatus, style = MaterialTheme.typography.bodySmall)
             }
         }
     }

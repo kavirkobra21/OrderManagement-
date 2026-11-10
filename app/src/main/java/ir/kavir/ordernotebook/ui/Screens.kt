@@ -27,6 +27,10 @@ import ir.kavir.ordernotebook.data.Order
 import ir.kavir.ordernotebook.data.OrderItem
 import ir.kavir.ordernotebook.data.Repo
 import ir.kavir.ordernotebook.util.Fmt
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 
 @Composable
@@ -201,7 +205,6 @@ fun OrderRow(o: Order, onClick: () -> Unit) {
 fun TrashScreen(repo: Repo, nav: Nav) {
     val scope = rememberCoroutineScope()
     val trash by repo.dao.deletedCustomers().collectAsState(emptyList())
-    var confirmOne by remember { mutableStateOf<Customer?>(null) }
     var confirmAll by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
         TopBar("سطل زباله", onBack = { nav.back() }, actions = {
@@ -210,22 +213,44 @@ fun TrashScreen(repo: Repo, nav: Nav) {
         if (trash.isEmpty()) Text("سطل زباله خالی است", Modifier.padding(24.dp))
         LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(trash, key = { it.id }) { c ->
-                Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFF6DDE5))) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(c.name.ifBlank { "بدون نام" }, fontWeight = FontWeight.Bold)
-                            Text(c.phone)
+                var progress by remember(c.id) { mutableStateOf(0f) }
+                var holdJob by remember(c.id) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+                Card(
+                    Modifier.fillMaxWidth().pointerInput(c.id) {
+                        // press and HOLD 5 s on the item itself to delete it for good; releasing, scrolling or moving away cancels
+                        detectTapGestures(onPress = {
+                            holdJob = scope.launch {
+                                val start = System.currentTimeMillis()
+                                while (true) {
+                                    val p = ((System.currentTimeMillis() - start) / 5000f).coerceAtMost(1f)
+                                    progress = p
+                                    if (p >= 1f) { withContext(NonCancellable) { repo.purgeCustomer(c.id) }; break }
+                                    kotlinx.coroutines.delay(50)
+                                }
+                            }
+                            tryAwaitRelease()
+                            holdJob?.cancel(); holdJob = null; progress = 0f
+                        })
+                    },
+                    shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFF6DDE5)),
+                ) {
+                    Column {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(c.name.ifBlank { "بدون نام" }, fontWeight = FontWeight.Bold)
+                                Text(c.phone)
+                                Text(
+                                    if (progress > 0f) "در حال حذف دائمی… ${kotlin.math.ceil((1f - progress) * 5f).toInt()} ثانیه (رها کنید تا لغو شود)"
+                                    else "برای حذف دائمی، ۵ ثانیه نگه دارید",
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                            IconButton(onClick = { scope.launch { repo.restoreCustomer(c.id) } }) { Icon(Icons.Filled.Restore, "بازیابی") }
                         }
-                        IconButton(onClick = { scope.launch { repo.restoreCustomer(c.id) } }) { Icon(Icons.Filled.Restore, "بازیابی") }
-                        IconButton(onClick = { confirmOne = c }) { Icon(Icons.Filled.DeleteForever, "حذف دائمی") }
+                        if (progress > 0f) LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth(), color = Color(0xFFB3261E))
                     }
                 }
             }
-        }
-    }
-    confirmOne?.let { c ->
-        ConfirmDialog("حذف دائمی", "«${c.name}» با همه سفارش‌ها و عکس‌ها برای همیشه پاک می‌شود.", "حذف دائمی", { confirmOne = null }) {
-            scope.launch { repo.purgeCustomer(c.id) }
         }
     }
     if (confirmAll) ConfirmDialog("خالی کردن سطل زباله", "همه موارد برای همیشه پاک می‌شوند.", "خالی کن", { confirmAll = false }) {

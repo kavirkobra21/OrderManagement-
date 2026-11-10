@@ -84,12 +84,12 @@ fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-fun Field(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier.fillMaxWidth(), singleLine: Boolean = true, minLines: Int = 1, keyboard: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default, password: Boolean = false, suffix: String? = null, transformation: androidx.compose.ui.text.input.VisualTransformation? = null) {
+fun Field(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier.fillMaxWidth(), singleLine: Boolean = true, minLines: Int = 1, keyboard: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default, password: Boolean = false, suffix: String? = null, transformation: androidx.compose.ui.text.input.VisualTransformation? = null, isError: Boolean = false) {
     OutlinedTextField(
         value = value, onValueChange = onChange, label = { Text(label) }, modifier = modifier,
         singleLine = singleLine, minLines = minLines, keyboardOptions = keyboard,
         visualTransformation = transformation ?: if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-        suffix = suffix?.let { { Text(it) } },
+        suffix = suffix?.let { { Text(it) } }, isError = isError,
         shape = RoundedCornerShape(16.dp),
         colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = Color.White, unfocusedContainerColor = Color.White.copy(alpha = 0.8f)),
     )
@@ -229,4 +229,25 @@ fun shareImage(ctx: Context, file: File, text: String? = null) {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     ctx.startActivity(Intent.createChooser(i, "اشتراک‌گذاری").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+}
+
+/** An item as typed in a form: the quantity stays RAW TEXT while editing so it can be cleared and retyped freely. */
+data class ItemRow(val title: String, val qty: String, val price: Long) {
+    /** parsed quantity, 0 when blank/invalid */
+    val q: Int get() = qty.toIntOrNull() ?: 0
+    val qtyValid: Boolean get() = q > 0
+    fun toItem() = ir.kavir.ordernotebook.data.OrderItem(title, q.coerceAtLeast(1), price)
+    companion object {
+        fun of(i: ir.kavir.ordernotebook.data.OrderItem) = ItemRow(i.title, i.qty.toString(), i.price)
+        fun blank() = ItemRow("", "1", 0)
+    }
+}
+
+fun cleanQty(raw: String): String = Fmt.toLatinDigits(raw).filter { it.isDigit() }.take(4)
+
+/** Quantity input: free typing (can be emptied), nothing is restored or saved while typing; validated on save. */
+@Composable
+fun QtyField(text: String, onText: (String) -> Unit, modifier: Modifier = Modifier.fillMaxWidth(), label: String = "تعداد") {
+    val bad = text.toIntOrNull()?.let { it <= 0 } ?: true
+    Field(label, text, { onText(cleanQty(it)) }, modifier, keyboard = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number), isError = bad)
 }

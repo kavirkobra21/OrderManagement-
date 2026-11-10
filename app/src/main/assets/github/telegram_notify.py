@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Send / edit Telegram notifications for orders stored in orders/<n>/ (runs in GitHub Actions).
+"""Send / edit Telegram notifications for orders stored in Order/orders/<n>/ (runs in GitHub Actions).
 
 Secrets come from the environment (GitHub Secrets): TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (old names BOT_TOKEN / CHAT_ID still work). Standard library only.
 
-Per order folder this script keeps orders/<n>/telegram.json:
+Per order folder this script keeps Order/orders/<n>/telegram.json:
   messageId / textHash         the text message (edited in place when the order changes)
   photoMessageId / imageSha    the generated notebook image (edited when it changes)
   sentFiles {path: sha256}     receipts / extra photos, each sent exactly once
@@ -144,6 +144,36 @@ ATT_LABEL = {
 
 
 # ------------------------------------------------------------------ Telegram client
+
+PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
+
+
+def template_values(o, c, fa=True):
+    items = o.get("items", [])
+    items_sum = sum(int(i.get("price") or 0) * int(i.get("qty") or 1) for i in items)
+    return {
+        "order_id": str(o.get("syncNo", "")), "customer_name": c.get("name", ""), "items": "\n".join(item_lines(o, fa)),
+        "total_price": money(o.get("total"), fa), "status": f"{order_status(o, fa)} / {pay_status(o, fa)}",
+        "created_at": o.get("dateText", ""), "description": (o.get("description") or "").strip(),
+        "notes": (o.get("notes") or "").strip(), "quantity": to_latin(o.get("quantity") or 1),
+        "phone": to_latin(c.get("phone", "")), "address": c.get("address", ""), "customer_id": c.get("contactId", ""),
+        "postal_code": to_latin(c.get("postalCode", "")), "invoice": o.get("invoiceNo", ""),
+        "delivery": o.get("deliveryText", ""), "items_total": money(items_sum, fa) if items_sum else "",
+        "deposit": money(o.get("deposit"), fa), "remaining": money(remaining(o), fa),
+    }
+
+
+def render_template(tpl, o, c, fa=True):
+    """User template -> message. Unknown or empty placeholders disappear (never shown raw); emojis are untouched."""
+    vals = template_values(o, c, fa)
+    out = PLACEHOLDER_RE.sub(lambda m: vals.get(m.group(1), ""), tpl)
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
+def message_for(o, c, fa, template=""):
+    """Custom template when the owner saved one, otherwise the built-in default format."""
+    return render_template(template, o, c, fa) or build_message(o, c, fa) if (template or "").strip() else build_message(o, c, fa)
+
 
 class TelegramError(Exception):
     def __init__(self, code, desc, not_found=False):
@@ -288,7 +318,7 @@ def adopt_legacy(order, folder, existing):
             "imageSha": tg.get("imageHash", ""), "sentFiles": sent}
 
 
-def process_order(tg, folder, fa, no):
+def process_order(tg, folder, fa, no, template="", resend=False, chat=""):
     order = load_json(os.path.join(folder, "order.json"))
     cust = load_json(os.path.join(folder, "customer.json"))
     if not order or not cust:
@@ -297,12 +327,20 @@ def process_order(tg, folder, fa, no):
     state_path = os.path.join(folder, "telegram.json")
     state = adopt_legacy(order, folder, load_json(state_path))
     state.setdefault("sentFiles", {})
+    if chat:
+        state["chatId"] = str(chat)
     before = json.dumps(state, sort_keys=True)
     ok = True
     try:
         # ---- text: send once, afterwards edit the same message
-        text = build_message(order, cust, fa)
-        h = hashlib.sha256(text.encode()).hexdigest()
+        text = message_for(order, cust, fa, template)
+        h = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if chat and state.get("chatId") and str(state["chatId"]) != str(chat):
+            state["messageId"] = 0          # the group changed: old message ids belong to another chat
+            state["photoMessageId"] = 0
+            state["sentFiles"] = {}
+        if resend:
+            state["messageId"] = 0          # explicit "Resend to Telegram": always a NEW message
         if state.get("messageId") and state.get("textHash") != h:
             try:
                 tg.edit_text(state["messageId"], text)
@@ -315,7 +353,7 @@ def process_order(tg, folder, fa, no):
         if not state.get("messageId"):
             state["messageId"] = tg.send_text(text)
             state["textHash"] = h
-            print(f"order {no}: message sent")
+            print(f"order {no}: message sent" + (" (resend)" if resend else ""))
 
         # ---- generated notebook image
         img = os.path.join(folder, "order_image.png")
@@ -370,17 +408,24 @@ def order_dirs(root):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--orders", default="orders")
+    ap.add_argument("--orders", default="Order/orders")
     ap.add_argument("--config", default="config/notify.json")
+    ap.add_argument("--resend", default="", help="order number whose message must be sent again as a NEW message")
     ap.add_argument("--test", action="store_true", help="send a test message and exit")
     args = ap.parse_args(argv)
 
     cfg = load_json(args.config, {}) or {}
-    if cfg.get("enabled") is False and not args.test:
+    resend = args.resend.strip()
+    if cfg.get("enabled") is False and not args.test and not resend:
         print("Telegram notifications are switched off in the app (config/notify.json); nothing to do.")
         return 0
     fa = cfg.get("lang", "fa") != "en"
     dirs = order_dirs(args.orders)
+    if resend:
+        dirs = [d for d in dirs if d == resend.lstrip("#")]
+        if not dirs:
+            print(f"::error::order {resend} was not found in {args.orders}")
+            return 1
     if not dirs and not args.test:
         print("No orders yet; nothing to do.")
         return 0
@@ -404,7 +449,7 @@ def main(argv=None):
 
     failed = 0
     for n in dirs:
-        if not process_order(tg, os.path.join(args.orders, n), fa, n):
+        if not process_order(tg, os.path.join(args.orders, n), fa, n, str(cfg.get("template") or ""), bool(resend), chat):
             failed += 1
     print(f"done: {len(dirs) - failed} ok, {failed} failed")
     return 1 if failed else 0

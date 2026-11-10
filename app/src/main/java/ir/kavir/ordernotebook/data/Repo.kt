@@ -71,10 +71,13 @@ class Repo private constructor(val ctx: Context) {
         dao.ordersOfNow(id).forEach { enqueue(it.id) }
     }
 
+    /** Permanent delete: local rows + image files now, the GitHub folders (Order/orders/<n>) through the sync queue. */
     suspend fun purgeCustomer(id: Long) {
+        val folders = dao.ordersOfNow(id).map { it.syncNo }.filter { it > 0 }
         dao.attachmentsOfCustomerNow(id).forEach { fileOf(it).delete() }
         dao.deleteCustomer(id) // orders + attachments rows cascade
-        // copies already on GitHub are intentionally kept as a backup
+        if (prefs.ghConfigured) folders.forEach { dao.putOp(PendingOp(kind = OpKind.GH_DELETE, orderId = it)) }
+        if (folders.isNotEmpty()) sync.kick()
     }
 
     suspend fun emptyTrash() {

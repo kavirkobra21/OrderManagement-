@@ -1,6 +1,6 @@
-name: Telegram Notify
+name: Telegram Orders
 
-# Sends / edits the Telegram message, order image and photos of every order stored in orders/.
+# Sends / edits the Telegram message, order image and photos of every order stored in Order/orders/.
 # Needs two repository secrets:  TELEGRAM_BOT_TOKEN  and  TELEGRAM_CHAT_ID  (the app creates them for you)
 # (Settings -> Secrets and variables -> Actions -> New repository secret)
 
@@ -8,7 +8,7 @@ on:
   push:
     branches: [main, master]
     paths:
-      - "orders/**"
+      - "Order/orders/**"
       - "config/notify.json"
   schedule:
     - cron: "17 * * * *" # hourly retry of anything that failed earlier (no-op when everything is delivered)
@@ -18,6 +18,10 @@ on:
         description: "Only send a test message"
         type: boolean
         default: false
+      resend:
+        description: "Order number to send again as a NEW message (empty = normal run)"
+        type: string
+        default: ""
 
 # one run at a time, queued runs wait (never cancel a run that is sending)
 concurrency:
@@ -25,7 +29,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write # commits orders/<n>/telegram.json (delivery state) with the built-in GITHUB_TOKEN
+  contents: write # commits Order/orders/<n>/telegram.json (delivery state) with the built-in GITHUB_TOKEN
 
 jobs:
   notify:
@@ -50,4 +54,10 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GIT_COMMIT_STATE: "1"
-        run: python .github/scripts/telegram_notify.py ${{ inputs.test && '--test' || '' }}
+          RESEND: ${{ inputs.resend }}
+          TEST: ${{ inputs.test }}
+        run: |
+          args=""
+          if [ "$TEST" = "true" ]; then args="--test"; fi
+          if [ -n "$RESEND" ]; then args="--resend $RESEND"; fi
+          python .github/scripts/telegram_notify.py $args

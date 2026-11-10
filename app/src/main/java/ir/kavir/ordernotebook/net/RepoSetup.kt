@@ -16,6 +16,9 @@ class RepoSetup(private val ctx: Context, private val prefs: Prefs) {
     data class Step(val title: String, val ok: Boolean, val detail: String = "")
 
     companion object {
+        const val WORKFLOW = ".github/workflows/telegram-orders.yml"
+        const val OLD_WORKFLOW = ".github/workflows/telegram.yml"
+        const val WORKFLOW_FILE = "telegram-orders.yml"
         const val SECRET_TOKEN = "TELEGRAM_BOT_TOKEN"
         const val SECRET_CHAT = "TELEGRAM_CHAT_ID"
         private val tokenRe = Regex("""^\d{3,}:[A-Za-z0-9_-]{10,}$""")
@@ -54,11 +57,18 @@ class RepoSetup(private val ctx: Context, private val prefs: Prefs) {
             steps += Step("مخزن Private", true, info.fullName)
 
             // 2) workflow + script + config (created when missing, updated in place when different)
-            val wf = putIfChanged(api, ".github/workflows/telegram.yml", asset("telegram.yml"), "Setup: Telegram workflow")
+            val wf = putIfChanged(api, WORKFLOW, asset("telegram-orders.yml"), "Setup: Telegram workflow")
+            // earlier versions used .github/workflows/telegram.yml; remove only OUR old file so two workflows never run
+            api.sha(OLD_WORKFLOW)?.let { sha ->
+                val old = api.getText(OLD_WORKFLOW).orEmpty()
+                if (old.contains("telegram_notify.py")) api.delete(OLD_WORKFLOW, sha, "Setup: replace old Telegram workflow")
+            }
+            for (keep in listOf("Order/orders/.gitkeep", "Order/images/.gitkeep", "Order/data/.gitkeep"))
+                if (api.sha(keep) == null) api.put(keep, ByteArray(0), "Setup: create ${keep.substringBeforeLast('/')}", null)
             val sc = putIfChanged(api, ".github/scripts/telegram_notify.py", asset("telegram_notify.py"), "Setup: Telegram script")
             if (api.sha("README.md") == null) api.put("README.md",
                 "# Order Notebook data\n\nPrivate storage for orders (orders/<n>/). Written by the Order Notebook app; Telegram messages are sent by GitHub Actions.\n".toByteArray(), "Setup: README", null)
-            val cfg = JSONObject().put("enabled", prefs.autoSend).put("lang", prefs.telegramLang).toString(2).toByteArray()
+            val cfg = JSONObject().put("enabled", prefs.autoSend).put("lang", prefs.telegramLang).put("template", prefs.telegramTemplate).toString(2).toByteArray()
             putIfChanged(api, "config/notify.json", cfg, "Config: Telegram notifications")
             steps += Step("Workflow و اسکریپت تلگرام", true, if (wf || sc) "ساخته/به‌روز شد" else "از قبل به‌روز بود")
 
