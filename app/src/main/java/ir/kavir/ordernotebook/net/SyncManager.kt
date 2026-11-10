@@ -50,6 +50,11 @@ class SyncManager(private val repo: Repo) {
     private var started = false
     private var privateOkAt = 0L
 
+    companion object {
+        /** pending_ops.orderId marker for "push config/notify.json" */
+        const val CONFIG_OP = 0L
+    }
+
     private val _syncing = MutableStateFlow(false)
     val syncing: StateFlow<Boolean> = _syncing
 
@@ -64,7 +69,16 @@ class SyncManager(private val repo: Repo) {
                 override fun onAvailable(network: Network) { kick() }
             })
         } catch (e: Exception) { /* no connectivity callbacks: manual / app-start sync still works */ }
-        kick()
+        scope.launch {
+            process()
+            pullOnce()
+        }
+    }
+
+    /** Once per app start: bring in orders that exist on GitHub but not (or only older) on this phone. */
+    private suspend fun pullOnce() {
+        if (!prefs.ghConfigured || !online()) return
+        try { restoreFromGitHub() } catch (e: Exception) { /* best effort; manual Restore reports errors */ }
     }
 
     fun kick() { scope.launch { process() } }
@@ -90,8 +104,8 @@ class SyncManager(private val repo: Repo) {
                 for (op in ops) {
                     try {
                         when (op.kind) {
-                            OpKind.GITHUB -> pushOrder(op.orderId)
-                            OpKind.TELEGRAM -> telegramOrder(op.orderId)
+                            OpKind.GITHUB -> if (op.orderId == CONFIG_OP) pushConfig() else pushOrder(op.orderId)
+                            else -> Unit // legacy in-app Telegram jobs: delivery is done by the GitHub Action now
                         }
                         dao.deleteOp(op.id)
                     } catch (e: IOException) {
@@ -208,6 +222,15 @@ class SyncManager(private val repo: Repo) {
 
         dao.setGhImageHash(o.id, GitHubApi.sha256(png))
         prefs.ghLastSync = System.currentTimeMillis()
+    }
+
+    private fun pushConfig() {
+        if (!prefs.ghConfigured) return
+        val api = GitHub(prefs)
+        ensurePrivate(api)
+        val bytes = JSONObject().put("enabled", prefs.autoSend).put("lang", prefs.telegramLang)
+            .toString(2).toByteArray(Charsets.UTF_8)
+        putIfChanged(api, "config/notify.json", bytes, api.sha("config/notify.json"), "Config: Telegram notifications")
     }
 
     private fun putIfChanged(api: GitHub, path: String, bytes: ByteArray, remoteSha: String?, msg: String) {
@@ -343,67 +366,5 @@ class SyncManager(private val repo: Repo) {
             )
         }
         return true
-    }
-
-    // ================================================================== Telegram
-
-    private suspend fun telegramOrder(orderId: Long) {
-        if (!prefs.tgConfigured) return
-        val o0 = dao.order(orderId) ?: return
-        val cust = dao.customer(o0.customerId) ?: return
-        val tg = Telegram.from(prefs)
-        val fa = prefs.telegramLang == "fa"
-        var changed = false
-
-        // ---- text message: send once, afterwards always edit the same message
-        val text = Messages.build(o0, cust.name, cust.phone, cust.address, fa)
-        var textId = o0.tgMessageId
-        if (textId != 0L) {
-            val r = tg.editText(textId, text)
-            if (!r.ok) {
-                if (r.notFound) textId = 0 else throw SyncException(r.message)
-            }
-        }
-        if (textId == 0L) {
-            val r = tg.sendText(text)
-            if (!r.ok) throw SyncException(r.message)
-            textId = r.messageId
-            dao.setTgMessage(o0.id, textId)
-            changed = true
-        }
-
-        // ---- order image: send once, edit the photo when the picture changed
-        val o = dao.order(orderId) ?: return
-        val png = renderPng(o, cust)
-        val hash = GitHubApi.sha256(png)
-        val file = File(ctx.cacheDir, "tg/order_${o.id}.png").also { it.parentFile?.mkdirs(); it.writeBytes(png) }
-        var photoId = o.tgPhotoMessageId
-        if (photoId != 0L && o.tgImageHash != hash) {
-            val r = tg.editPhoto(photoId, file)
-            if (r.ok) { dao.setTgPhoto(o.id, photoId, hash); changed = true }
-            else if (r.notFound) photoId = 0 else throw SyncException(r.message)
-        }
-        if (photoId == 0L) {
-            val r = tg.sendPhoto(file)
-            if (!r.ok) throw SyncException(r.message)
-            dao.setTgPhoto(o.id, r.messageId, hash)
-            changed = true
-        }
-
-        // ---- receipts / order photos: each is sent exactly once
-        val extra = dao.attachmentsOfOrderNow(o.id).filter {
-            !it.tgSent && (it.type == AttachmentType.RECEIPT || it.type == AttachmentType.ORDER)
-        }
-        for (a in extra) {
-            val f = repo.fileOf(a)
-            if (!f.exists()) { dao.setTgSent(a.id); continue }
-            val label = (if (a.type == AttachmentType.RECEIPT) "رسید پرداخت" else "عکس سفارش") + " — فاکتور ${o.invoiceNo}"
-            val r = tg.sendPhoto(f, label)
-            if (!r.ok) throw SyncException(r.message)
-            dao.setTgSent(a.id)
-        }
-
-        // message ids are part of order.json so a restore on another phone does not resend everything
-        if (changed) enqueueGh(o.id)
     }
 }

@@ -23,6 +23,15 @@ class CoreTests {
         assertEquals(items, OrderItem.decode(OrderItem.encode(items)))
     }
 
+    @Test fun thousandsGrouping() {
+        assertEquals("10,000", Fmt.group("10000"))
+        assertEquals("1,500,000", Fmt.group("1500000"))
+        assertEquals("999", Fmt.group("999"))
+        assertEquals("1,000", Fmt.group("1000"))
+        assertEquals("", Fmt.group(""))
+        assertEquals("1,500,000 تومان", Fmt.toman(1500000))
+    }
+
     @Test fun remaining() {
         assertEquals(700L, Order(customerId = 1, total = 1000, deposit = 300).remaining)
         assertEquals(0L, Order(customerId = 1, total = 1000, deposit = 300, settled = true).remaining)

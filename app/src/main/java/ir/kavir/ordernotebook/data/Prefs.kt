@@ -18,10 +18,13 @@ class Prefs(ctx: Context) {
         ctx.getSharedPreferences("settings_fallback", Context.MODE_PRIVATE)
     }
 
+    init {
+        // Bot Token / Chat ID now live only in GitHub Secrets; wipe anything older versions stored here
+        if (sp.contains("botToken") || sp.contains("chatId")) sp.edit().remove("botToken").remove("chatId").apply()
+    }
+
     private fun s(k: String, d: String = "") = sp.getString(k, d) ?: d
 
-    var botToken: String get() = s("botToken"); set(v) = sp.edit().putString("botToken", v.trim()).apply()
-    var chatId: String get() = s("chatId"); set(v) = sp.edit().putString("chatId", v.trim()).apply()
     var telegramLang: String get() = s("tgLang", "fa"); set(v) = sp.edit().putString("tgLang", v).apply()
     var autoSend: Boolean get() = sp.getBoolean("autoSend", true); set(v) = sp.edit().putBoolean("autoSend", v).apply()
     var ghToken: String get() = s("ghToken"); set(v) = sp.edit().putString("ghToken", v.trim()).apply()
@@ -29,21 +32,17 @@ class Prefs(ctx: Context) {
     var ghLastSync: Long get() = sp.getLong("ghLastSync", 0); set(v) = sp.edit().putLong("ghLastSync", v).apply()
     var invoiceCounter: Long get() = sp.getLong("invoice", 0); set(v) = sp.edit().putLong("invoice", v).apply()
 
-    val tgConfigured: Boolean get() = botToken.isNotBlank() && chatId.isNotBlank()
     val ghConfigured: Boolean get() = ghToken.isNotBlank() && ir.kavir.ordernotebook.net.GitHubApi.isValidRepo(ghRepo)
 
     fun nextInvoice(): String { invoiceCounter += 1; return invoiceCounter.toString() }
 
     /** non-secret + secret settings as a map for backup */
     fun export(): Map<String, String> = mapOf(
-        "botToken" to botToken, "chatId" to chatId,
         "telegramLang" to telegramLang, "autoSend" to autoSend.toString(),
         "ghRepo" to ghRepo, "invoiceCounter" to invoiceCounter.toString(),
     )
 
     fun import(m: Map<String, String>) {
-        m["botToken"]?.let { botToken = it }
-        m["chatId"]?.let { chatId = it }
         m["telegramLang"]?.let { telegramLang = it }
         m["autoSend"]?.let { autoSend = it.toBoolean() }
         m["ghRepo"]?.let { ghRepo = it }

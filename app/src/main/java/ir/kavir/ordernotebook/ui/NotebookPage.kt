@@ -11,7 +11,11 @@ import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextDirectionHeuristics
 import android.text.TextPaint
+import android.text.TextUtils
 import ir.kavir.ordernotebook.util.Fmt
+
+/** One order line: [price] is the unit price (the page shows price x qty). */
+data class PageItem(val name: String, val qty: Int, val price: Long)
 
 /** Everything that is written on the notebook page. */
 data class PageData(
@@ -23,6 +27,7 @@ data class PageData(
     val delivery: String = "",
     val notes: String = "",
     val description: String = "",
+    val items: List<PageItem> = emptyList(),
     val total: Long = 0,
     val deposit: Long = 0,
     val remaining: Long = 0,
@@ -227,6 +232,58 @@ object NotebookPage {
         c.drawOval(RectF(x - 18, y - 12, x + 18, y + 24), fill(Color.parseColor("#E8556F")))
     }
 
+    /** Item rows "• name ........ 100,000 تومان" (name on the right, its price opposite), then the free-text details. */
+    private fun drawOrderItems(c: Canvas, d: PageData, r: RectF) {
+        val rows = d.items.filter { it.name.isNotBlank() || it.price > 0 }
+        val hasDesc = d.description.isNotBlank()
+        if (rows.isEmpty() && !hasDesc) return
+        val namePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = INK; textAlign = Paint.Align.RIGHT }
+        val pricePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = INK; textAlign = Paint.Align.LEFT; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        fun descLayout(size: Float): StaticLayout? {
+            if (!hasDesc) return null
+            val p = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = INK; textSize = size * 0.8f }
+            return StaticLayout.Builder.obtain(d.description, 0, d.description.length, p, r.width().toInt())
+                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_RTL)
+                .build()
+        }
+        var size = 34f
+        var desc = descLayout(size)
+        while (true) {
+            val need = rows.size * size * 1.5f + (desc?.height ?: 0) + (if (hasDesc && rows.isNotEmpty()) size * 0.3f else 0f)
+            if (need <= r.height() || size <= 14f) break
+            size -= 2f
+            desc = descLayout(size)
+        }
+        namePaint.textSize = size
+        pricePaint.textSize = size
+        val rowH = size * 1.5f
+        c.save()
+        c.clipRect(r)
+        var y = r.top
+        for (row in rows) {
+            val base = y + rowH * 0.72f
+            val priceText = if (row.price > 0) Fmt.toman(row.price * row.qty) else ""
+            val pw = pricePaint.measureText(priceText)
+            val label = "• " + row.name + (if (row.qty > 1) " ×" + Fmt.toPersianDigits(row.qty.toString()) else "")
+            val shown = TextUtils.ellipsize(label, namePaint, (r.width() - pw - 28f).coerceAtLeast(40f), TextUtils.TruncateAt.END).toString()
+            c.drawText(shown, r.right, base, namePaint)
+            if (priceText.isNotEmpty()) {
+                c.drawText(priceText, r.left, base, pricePaint)
+                val x1 = r.left + pw + 10f
+                val x2 = r.right - namePaint.measureText(shown) - 10f
+                if (x2 - x1 > 24f) dottedLine(c, x1, x2, base - size * 0.2f)
+            }
+            y += rowH
+        }
+        desc?.let {
+            c.save(); c.translate(r.left, y + size * 0.3f); it.draw(c); c.restore()
+        }
+        c.restore()
+    }
+
     // ------------------------------------------------------------------- page
     fun draw(c: Canvas, d: PageData) {
         // sheet
@@ -321,12 +378,12 @@ object NotebookPage {
         // --- order description (inside the lower yellow box; bubble + tail stay above the text)
         softBlob(c, RectF(30f, 1075f, 970f, 1385f), 80f, YELLOW)
         bubble(c, RectF(730f, 1035f, 960f, 1115f), tailLeft = true)
-        stickerOutlineText(c, "شرح سفارش", 940f, 1088f, 38f)
+        stickerOutlineText(c, "سفارش‌ها", 940f, 1088f, 38f)
         c.save(); c.rotate(8f, 670f, 1070f)
         c.drawRect(RectF(640f, 1040f, 705f, 1105f), fill(Color.WHITE))
         c.restore()
         trees(c, 230f, 920f, 1365f)
-        fitText(c, d.description, RectF(250f, 1160f, 935f, 1350f), 34f, 14f)
+        drawOrderItems(c, d, RectF(250f, 1158f, 935f, 1352f))
         coffeeCup(c, 50f, 1235f)
     }
 }

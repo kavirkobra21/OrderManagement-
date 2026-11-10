@@ -15,6 +15,7 @@ sealed interface Screen {
     data class CustomerForm(val id: Long?) : Screen
     data class CustomerDetail(val id: Long) : Screen
     data class OrderForm(val customerId: Long, val orderId: Long?) : Screen
+    data object PasteOrder : Screen
     data object Trash : Screen
     data object Settings : Screen
 }
@@ -50,6 +51,7 @@ fun App() {
                         is Screen.CustomerForm -> CustomerFormScreen(repo, nav, s.id)
                         is Screen.CustomerDetail -> CustomerDetailScreen(repo, nav, s.id, snack)
                         is Screen.OrderForm -> OrderScreen(repo, nav, s.customerId, s.orderId, snack)
+                        Screen.PasteOrder -> PasteOrderScreen(repo, nav, snack)
                         Screen.Trash -> TrashScreen(repo, nav)
                         Screen.Settings -> SettingsScreen(repo, nav, snack)
                     }

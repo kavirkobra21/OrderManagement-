@@ -1,0 +1,53 @@
+name: Telegram Notify
+
+# Sends / edits the Telegram message, order image and photos of every order stored in orders/.
+# Needs two repository secrets:  BOT_TOKEN  and  CHAT_ID
+# (Settings -> Secrets and variables -> Actions -> New repository secret)
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "orders/**"
+      - "config/notify.json"
+  schedule:
+    - cron: "17 * * * *" # hourly retry of anything that failed earlier (no-op when everything is delivered)
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Only send a test message"
+        type: boolean
+        default: false
+
+# one run at a time, queued runs wait (never cancel a run that is sending)
+concurrency:
+  group: telegram-notify
+  cancel-in-progress: false
+
+permissions:
+  contents: write # commits orders/<n>/telegram.json (delivery state) with the built-in GITHUB_TOKEN
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python (standard library only, no dependencies to install)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Send to Telegram
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          GIT_COMMIT_STATE: "1"
+        run: python .github/scripts/telegram_notify.py ${{ inputs.test && '--test' || '' }}

@@ -29,6 +29,7 @@ import androidx.core.content.FileProvider
 import ir.kavir.ordernotebook.data.Customer
 import ir.kavir.ordernotebook.data.Order
 import ir.kavir.ordernotebook.data.OrderItem
+import ir.kavir.ordernotebook.util.Fmt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -83,14 +84,46 @@ fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-fun Field(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier.fillMaxWidth(), singleLine: Boolean = true, minLines: Int = 1, keyboard: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default, password: Boolean = false, suffix: String? = null) {
+fun Field(label: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier.fillMaxWidth(), singleLine: Boolean = true, minLines: Int = 1, keyboard: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default, password: Boolean = false, suffix: String? = null, transformation: androidx.compose.ui.text.input.VisualTransformation? = null) {
     OutlinedTextField(
         value = value, onValueChange = onChange, label = { Text(label) }, modifier = modifier,
         singleLine = singleLine, minLines = minLines, keyboardOptions = keyboard,
-        visualTransformation = if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+        visualTransformation = transformation ?: if (password) androidx.compose.ui.text.input.PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
         suffix = suffix?.let { { Text(it) } },
         shape = RoundedCornerShape(16.dp),
         colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = Color.White, unfocusedContainerColor = Color.White.copy(alpha = 0.8f)),
+    )
+}
+
+/** Shows the stored digits with a comma every three digits while typing (1500000 -> 1,500,000). */
+class ThousandsTransformation : androidx.compose.ui.text.input.VisualTransformation {
+    override fun filter(text: androidx.compose.ui.text.AnnotatedString): androidx.compose.ui.text.input.TransformedText {
+        val s = text.text
+        val n = s.length
+        fun commasUpTo(o: Int): Int {
+            var c = 0
+            for (i in 1..minOf(o, n - 1)) if ((n - i) % 3 == 0) c++
+            return c
+        }
+        val mapping = object : androidx.compose.ui.text.input.OffsetMapping {
+            override fun originalToTransformed(offset: Int) = offset + commasUpTo(offset)
+            override fun transformedToOriginal(offset: Int): Int {
+                var best = 0
+                for (o in 0..n) { if (o + commasUpTo(o) <= offset) best = o else break }
+                return best
+            }
+        }
+        return androidx.compose.ui.text.input.TransformedText(androidx.compose.ui.text.AnnotatedString(Fmt.group(s)), mapping)
+    }
+}
+
+/** Price input: [digits] is the real number as plain digits; display gets live separators and "تومان". */
+@Composable
+fun MoneyField(label: String, digits: String, onDigits: (String) -> Unit, modifier: Modifier = Modifier.fillMaxWidth()) {
+    Field(
+        label, digits, { onDigits(Fmt.toLatinDigits(it).filter { c -> c.isDigit() }) }, modifier,
+        keyboard = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+        suffix = "تومان", transformation = ThousandsTransformation(),
     )
 }
 
@@ -150,12 +183,11 @@ fun Thumb(file: File, modifier: Modifier = Modifier, size: Int = 400) {
 // ------------------------------------------------------------------ helpers
 
 fun pageData(o: Order, c: Customer?): PageData {
-    val items = OrderItem.decode(o.itemsText)
-    val itemLines = items.joinToString("\n") { "• ${it.title} × ${Fmt2.n(it.qty)}" }
+    val items = OrderItem.decode(o.itemsText).map { PageItem(it.title, it.qty, it.price) }
     return PageData(
-        date = o.dateText, invoice = o.invoiceNo, name = c?.name.orEmpty(), phone = ir.kavir.ordernotebook.util.Fmt.toLatinDigits(c?.phone.orEmpty()),
+        date = o.dateText, invoice = o.invoiceNo, name = c?.name.orEmpty(), phone = Fmt.toLatinDigits(c?.phone.orEmpty()),
         address = c?.address.orEmpty(), delivery = o.deliveryText, notes = o.notes,
-        description = listOf(o.description, itemLines).filter { it.isNotBlank() }.joinToString("\n"),
+        description = o.description, items = items,
         total = o.total, deposit = o.deposit, remaining = o.remaining,
         ready = o.stReady, settled = o.settled || o.paid, delivered = o.stDelivered,
     )

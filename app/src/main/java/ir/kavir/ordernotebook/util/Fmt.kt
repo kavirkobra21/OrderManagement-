@@ -25,6 +25,14 @@ object Fmt {
         return if (fa) toPersianDigits(s).replace(",", "٬") else s
     }
 
+    /** "1500000" -> "1,500,000" (digits only in, grouped string out) */
+    fun group(digits: String): String = buildString {
+        for ((i, ch) in digits.withIndex()) {
+            if (i > 0 && (digits.length - i) % 3 == 0) append(',')
+            append(ch)
+        }
+    }
+
     /** 86000 -> "86,000" (English digits, comma thousands) */
     fun moneyEn(v: Long): String = "%,d".format(java.util.Locale.US, v)
 

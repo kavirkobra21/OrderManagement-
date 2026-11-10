@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import ir.kavir.ordernotebook.data.Customer
 import ir.kavir.ordernotebook.data.Order
+import ir.kavir.ordernotebook.data.OrderItem
 import ir.kavir.ordernotebook.data.Repo
 import ir.kavir.ordernotebook.util.Fmt
 import kotlinx.coroutines.launch
@@ -54,6 +55,7 @@ fun HomeScreen(repo: Repo, nav: Nav) {
             Button(onClick = { nav.go(Screen.CustomerForm(null)) }, Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(28.dp)) {
                 Icon(Icons.Filled.Add, null); Spacer(Modifier.width(8.dp)); Text("مشتری جدید")
             }
+            FilledTonalButton(onClick = { nav.go(Screen.PasteOrder) }, Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(28.dp)) { Text("ورود سفارش با Paste") }
             FilledTonalButton(onClick = { nav.go(Screen.Customers) }, Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(28.dp)) { Text("لیست مشتریان") }
             FilledTonalButton(onClick = { nav.go(Screen.Trash) }, Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(28.dp)) {
                 Icon(Icons.Filled.Delete, null); Spacer(Modifier.width(8.dp)); Text("سطل زباله (${Fmt.toPersianDigits(trash.size.toString())})")
@@ -174,7 +176,14 @@ fun OrderRow(o: Order, onClick: () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = Color(0xFFDDEFDD))) {
         Column(Modifier.padding(14.dp)) {
             Text("فاکتور ${o.invoiceNo}  •  ${o.dateText}", fontWeight = FontWeight.Bold)
-            Text(listOf(o.description.lines().firstOrNull().orEmpty()).filter { it.isNotBlank() }.firstOrNull() ?: "—", maxLines = 1)
+            val items = OrderItem.decode(o.itemsText)
+            if (items.isEmpty()) Text(o.description.lines().firstOrNull { it.isNotBlank() } ?: "—", maxLines = 1)
+            items.forEach {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("• " + it.title + (if (it.qty > 1) " ×" + Fmt.toPersianDigits(it.qty.toString()) else ""), Modifier.weight(1f), maxLines = 1, style = MaterialTheme.typography.bodyMedium)
+                    if (it.price > 0) Text(Fmt.toman(it.price * it.qty), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                }
+            }
             Text("کل: ${Fmt.toman(o.total)}   باقی‌مانده: ${Fmt.toman(o.remaining)}")
             Text(
                 when { o.stDelivered -> "تحویل داده شده"; o.stReady -> "آماده شده"; o.stInProgress -> "در حال انجام"; else -> "ثبت شده" },

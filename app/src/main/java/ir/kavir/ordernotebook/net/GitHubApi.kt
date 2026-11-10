@@ -40,7 +40,7 @@ class GitHub(private val prefs: Prefs) {
 
     class ApiException(val code: Int, message: String) : Exception(message)
     data class Entry(val name: String, val path: String, val type: String, val sha: String)
-    data class RepoInfo(val fullName: String, val isPrivate: Boolean, val canPush: Boolean)
+    data class RepoInfo(val fullName: String, val isPrivate: Boolean, val canPush: Boolean, val defaultBranch: String)
 
     private val json = "application/vnd.github+json"
     private val raw = "application/vnd.github.raw+json"
@@ -88,7 +88,7 @@ class GitHub(private val prefs: Prefs) {
         if (code != 200) throw err(code, body)
         val j = JSONObject(String(body, Charsets.UTF_8))
         val perms = j.optJSONObject("permissions")
-        return RepoInfo(j.optString("full_name"), j.optBoolean("private"), perms?.optBoolean("push") ?: false)
+        return RepoInfo(j.optString("full_name"), j.optBoolean("private"), perms?.optBoolean("push") ?: false, j.optString("default_branch", "main"))
     }
 
     /** Lists a directory; a missing directory is an empty list. */
@@ -140,6 +140,17 @@ class GitHub(private val prefs: Prefs) {
         val b = JSONObject().put("message", message).put("sha", sha)
         val (code, resp) = exec("DELETE", url("contents/$path"), b.toString().toByteArray(Charsets.UTF_8))
         if (code != 200 && code != 404) throw err(code, resp)
+    }
+
+    /** Starts a workflow_dispatch run (needs a token with Actions: Read and write). */
+    fun dispatch(workflowFile: String, ref: String, inputs: Map<String, String>) {
+        val inp = JSONObject()
+        inputs.forEach { (k, v) -> inp.put(k, v) }
+        val b = JSONObject().put("ref", ref).put("inputs", inp)
+        val (code, resp) = exec("POST", url("actions/workflows/$workflowFile/dispatches"), b.toString().toByteArray(Charsets.UTF_8))
+        if (code == 204) return
+        if (code == 403 || code == 404) throw ApiException(code, "توکن اجازه‌ی اجرای Actions را ندارد (Actions: Read and write) یا workflow پیدا نشد")
+        throw err(code, resp)
     }
 
     /** ISO date of the newest commit touching [path], or null. */

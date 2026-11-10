@@ -27,17 +27,17 @@ class Repo private constructor(val ctx: Context) {
     // ------------------------------------------------------------------ sync queue
 
     /**
-     * Adds GitHub / Telegram jobs for an order to the Pending Sync queue and wakes the worker.
-     * Jobs are only created for services that are configured; [forceTg] sends even if auto-send is off.
+     * Adds a GitHub push job for an order to the Pending Sync queue and wakes the worker.
+     * Telegram is delivered by the GitHub Action once the order is pushed (nothing is sent from the phone).
      */
-    suspend fun enqueue(orderId: Long, gh: Boolean = true, tg: Boolean = true, forceTg: Boolean = false) {
-        if (gh && prefs.ghConfigured) dao.putOp(PendingOp(kind = OpKind.GITHUB, orderId = orderId))
-        if (tg && prefs.tgConfigured) {
-            val o = dao.order(orderId)
-            if (forceTg || prefs.autoSend || (o != null && o.tgMessageId != 0L)) {
-                dao.putOp(PendingOp(kind = OpKind.TELEGRAM, orderId = orderId))
-            }
-        }
+    suspend fun enqueue(orderId: Long) {
+        if (prefs.ghConfigured) dao.putOp(PendingOp(kind = OpKind.GITHUB, orderId = orderId))
+        sync.kick()
+    }
+
+    /** Queue config/notify.json (Telegram language + on/off switch read by the Action). */
+    suspend fun enqueueConfig() {
+        if (prefs.ghConfigured) dao.putOp(PendingOp(kind = OpKind.GITHUB, orderId = SyncManager.CONFIG_OP))
         sync.kick()
     }
 
@@ -57,18 +57,18 @@ class Repo private constructor(val ctx: Context) {
         if (c.id == 0L) return dao.insertCustomer(c)
         val cur = dao.customer(c.id)
         dao.updateCustomer(c.copy(uid = cur?.uid ?: c.uid, createdAt = cur?.createdAt ?: c.createdAt))
-        dao.ordersOfNow(c.id).forEach { enqueue(it.id, tg = true) }
+        dao.ordersOfNow(c.id).forEach { enqueue(it.id) }
         return c.id
     }
 
     suspend fun trashCustomer(id: Long) {
         dao.setDeleted(id, System.currentTimeMillis(), System.currentTimeMillis())
-        dao.ordersOfNow(id).forEach { enqueue(it.id, tg = false) }
+        dao.ordersOfNow(id).forEach { enqueue(it.id) }
     }
 
     suspend fun restoreCustomer(id: Long) {
         dao.setDeleted(id, null, System.currentTimeMillis())
-        dao.ordersOfNow(id).forEach { enqueue(it.id, tg = false) }
+        dao.ordersOfNow(id).forEach { enqueue(it.id) }
     }
 
     suspend fun purgeCustomer(id: Long) {
@@ -126,6 +126,6 @@ class Repo private constructor(val ctx: Context) {
     suspend fun removeAttachment(a: Attachment) {
         fileOf(a).delete()
         dao.deleteAttachment(a.id)
-        if (a.orderId != null) { dao.touchOrder(a.orderId, System.currentTimeMillis()); enqueue(a.orderId, tg = false) }
+        if (a.orderId != null) { dao.touchOrder(a.orderId, System.currentTimeMillis()); enqueue(a.orderId) }
     }
 }

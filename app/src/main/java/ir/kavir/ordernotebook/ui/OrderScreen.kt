@@ -80,6 +80,17 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
     val live = order.copy(total = Fmt.parseMoney(totalS), deposit = Fmt.parseMoney(depositS), itemsText = OrderItem.encode(items))
     val data = pageData(live, customer)
 
+    // total follows the sum of the item prices whenever an item/price/qty changes (stored as a real number)
+    val itemsSum = items.sumOf { it.price * it.qty }
+    var autoSum by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(itemsSum, loaded) {
+        if (loaded) {
+            val prev = autoSum
+            if (prev != null && prev != itemsSum) totalS = if (itemsSum > 0) itemsSum.toString() else ""
+            autoSum = itemsSum
+        }
+    }
+
     val previewBmp by produceState<android.graphics.Bitmap?>(null, data) {
         delay(150)
         value = withContext(Dispatchers.Default) { NotebookPage.render(data, 0.9f) }
@@ -121,33 +132,37 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                 Field("شماره فاکتور", order.invoiceNo, { order = order.copy(invoiceNo = it) })
                 Field("زمان تحویل", order.deliveryText, { order = order.copy(deliveryText = it) })
                 Field("نکات سفارش", order.notes, { order = order.copy(notes = it) }, singleLine = false, minLines = 2)
-                Field("شرح سفارش", order.description, { order = order.copy(description = it) }, singleLine = false, minLines = 3)
+                Field("توضیحات", order.description, { order = order.copy(description = it) }, singleLine = false, minLines = 3)
                 customer?.let { Text("مشتری: ${it.name} — ${it.phone}", style = MaterialTheme.typography.bodySmall) }
             }
 
-            Section("آیتم‌های سفارش") {
+            Section("سفارش‌ها") {
                 items.forEachIndexed { i, it ->
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Field("عنوان", it.title, { v -> items = items.toMutableList().also { l -> l[i] = it.copy(title = v) } }, Modifier.weight(1f))
-                        Field("تعداد", it.qty.toString(), { v -> items = items.toMutableList().also { l -> l[i] = it.copy(qty = Fmt.parseMoney(v).toInt().coerceAtLeast(1)) } },
-                            Modifier.width(70.dp), keyboard = KeyboardOptions(keyboardType = KeyboardType.Number))
-                        Field("قیمت (تومان)", if (it.price > 0) it.price.toString() else "", { v -> items = items.toMutableList().also { l -> l[i] = it.copy(price = Fmt.parseMoney(v)) } },
-                            Modifier.width(130.dp), keyboard = KeyboardOptions(keyboardType = KeyboardType.Number), suffix = "ت")
-                        IconButton(onClick = { items = items.toMutableList().also { l -> l.removeAt(i) } }) { Icon(Icons.Filled.Close, "حذف آیتم") }
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Field("نام آیتم", it.title, { v -> items = items.toMutableList().also { l -> l[i] = it.copy(title = v) } }, Modifier.weight(1f))
+                            IconButton(onClick = { items = items.toMutableList().also { l -> l.removeAt(i) } }) { Icon(Icons.Filled.Close, "حذف آیتم") }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Field("تعداد", it.qty.toString(), { v -> items = items.toMutableList().also { l -> l[i] = it.copy(qty = Fmt.parseMoney(v).toInt().coerceAtLeast(1)) } },
+                                Modifier.width(84.dp), keyboard = KeyboardOptions(keyboardType = KeyboardType.Number))
+                            MoneyField("قیمت هر یک", if (it.price > 0) it.price.toString() else "",
+                                { v -> items = items.toMutableList().also { l -> l[i] = it.copy(price = Fmt.parseMoney(v)) } }, Modifier.weight(1f))
+                        }
+                        if (it.price > 0 && it.qty > 1) Text("جمع این آیتم: ${Fmt.toman(it.price * it.qty)}", style = MaterialTheme.typography.bodySmall)
                     }
+                    HorizontalDivider()
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { items = items + OrderItem("", 1, 0) }) { Text("+ آیتم") }
-                    OutlinedButton(
-                        onClick = { totalS = items.sumOf { it.price * it.qty }.toString() },
-                        enabled = items.any { it.price > 0 },
-                    ) { Text("جمع آیتم‌ها ← هزینه کل") }
+                    OutlinedButton(onClick = { totalS = itemsSum.toString() }, enabled = items.any { it.price > 0 }) { Text("هزینه کل = جمع آیتم‌ها") }
                 }
+                if (items.isNotEmpty()) Text("جمع آیتم‌ها: ${Fmt.toman(itemsSum)}", style = MaterialTheme.typography.titleMedium)
             }
 
             Section("پرداخت‌ها") {
-                Field("هزینه کل", totalS, { totalS = Fmt.toLatinDigits(it).filter { c -> c.isDigit() } }, keyboard = KeyboardOptions(keyboardType = KeyboardType.Number), suffix = "تومان")
-                Field("بیعانه", depositS, { depositS = Fmt.toLatinDigits(it).filter { c -> c.isDigit() } }, keyboard = KeyboardOptions(keyboardType = KeyboardType.Number), suffix = "تومان")
+                MoneyField("هزینه کل", totalS, { totalS = it })
+                MoneyField("بیعانه", depositS, { depositS = it })
                 Text("باقی‌مانده: ${Fmt.toman(live.remaining)}", style = MaterialTheme.typography.titleMedium)
             }
 
@@ -201,7 +216,7 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                             busy = true
                             save()
                             snack.showSnackbar(
-                                if (repo.prefs.ghConfigured || repo.prefs.tgConfigured) "ذخیره شد؛ همگام‌سازی در صف است (بدون اینترنت پس از اتصال انجام می‌شود)"
+                                if (repo.prefs.ghConfigured) "ذخیره شد؛ همگام‌سازی با GitHub در صف است (بدون اینترنت پس از اتصال انجام می‌شود)"
                                 else "ذخیره شد"
                             )
                             busy = false
@@ -231,18 +246,6 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                     }
                 }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(48.dp)) { Icon(Icons.Filled.Share, null); Spacer(Modifier.width(8.dp)); Text("اشتراک‌گذاری تصویر") }
 
-                FilledTonalButton(onClick = {
-                    scope.launch {
-                        if (!repo.prefs.tgConfigured) { snack.showSnackbar("ابتدا از تنظیمات، Telegram Settings را کامل کنید"); return@launch }
-                        busy = true
-                        val saved = save()!!
-                        repo.enqueue(saved.id, gh = false, tg = true, forceTg = true)
-                        snack.showSnackbar(if ((repo.dao.order(saved.id)?.tgMessageId ?: 0L) != 0L) "ویرایش پیام تلگرام در صف قرار گرفت" else "ارسال به تلگرام در صف قرار گرفت")
-                        busy = false
-                    }
-                }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(48.dp)) {
-                    Icon(Icons.Filled.Send, null); Spacer(Modifier.width(8.dp)); Text("ارسال / بروزرسانی در تلگرام")
-                }
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
         }

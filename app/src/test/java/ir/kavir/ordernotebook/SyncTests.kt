@@ -1,9 +1,7 @@
 package ir.kavir.ordernotebook
 
 import ir.kavir.ordernotebook.data.Order
-import ir.kavir.ordernotebook.data.OrderItem
 import ir.kavir.ordernotebook.net.GitHubApi
-import ir.kavir.ordernotebook.net.Messages
 import ir.kavir.ordernotebook.util.Fmt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -27,41 +25,6 @@ class SyncTests {
     @Test fun moneyUsesEnglishDigitsAndToman() {
         assertEquals("86,000 تومان", Fmt.toman(86000))
         assertEquals("0 تومان", Fmt.toman(0))
-    }
-
-    @Test fun persianMessageMatchesSpec() {
-        val o = Order(
-            customerId = 1, invoiceNo = "۱", dateText = "۱۴۰۵/۰۸/۱۸", deliveryText = "سه شنبه",
-            description = "شمع میزویی",
-            itemsText = OrderItem.encode(listOf(OrderItem("شمع", 1, 0), OrderItem("جا شمع", 1, 0))),
-            total = 86000, deposit = 0, settled = true,
-        )
-        val expected = """
-سفارش ثبت شد:
-
-(نام مشتری): میزو
-(شماره تماس): 09646494949
-(شماره فاکتور): ۱
-(تاریخ): ۱۴۰۵/۰۸/۱۸
-(زمان تحویل): سه شنبه
-(آدرس): مشهد
-
-(شرح سفارش):
-شمع میزویی
-
-(سفارش ها):
-- شمع x1
-- جا شمع x1
-
-(هزینه کل): 86,000 تومان
-(بیعانه): 0 تومان
-(باقیمانده): 0 تومان
-
-(وضعیت پرداخت): تسویه کامل
-(وضعیت سفارش): ثبت شده
-""".trim()
-        // phone typed with Persian digits must still come out English
-        assertEquals(expected, Messages.build(o, "میزو", "۰۹۶۴۶۴۹۴۹۴۹", "مشهد", fa = true))
     }
 
     @Test fun remainingIsZeroWhenSettled() {
