@@ -75,3 +75,24 @@ class TelegramTemplateTests {
         assertTrue(!t.render(t.DEFAULT_TEXT, t.sample()).contains("{"))
     }
 }
+
+class PlaceholderInsertTests {
+    private val ins = ir.kavir.ordernotebook.util.PlaceholderInsert
+
+    @Test fun insertsAtCaretNotAtEnd() {
+        val (t, c) = ins.insert("سلام  خوش آمدید", 5, 5, "{name}")
+        assertEquals("سلام {name} خوش آمدید", t); assertEquals(11, c)
+    }
+
+    @Test fun replacesSelection() {
+        val (t, c) = ins.insert("a XXX b", 2, 5, "{items}")
+        assertEquals("a {items} b", t); assertEquals(9, c)
+        assertEquals(ins.insert("a XXX b", 5, 2, "{items}"), t to c) // reversed selection
+    }
+
+    @Test fun startEndAndEmojiSafe() {
+        assertEquals("{id}🌹", ins.insert("🌹", 0, 0, "{id}").first)
+        assertEquals("🌹{id}", ins.insert("🌹", 2, 2, "{id}").first)
+        assertEquals("x{id}", ins.insert("x", 99, 99, "{id}").first)
+    }
+}

@@ -43,6 +43,9 @@ object OrderPaste {
     private val qtyWord = Regex("^(.*?)\\s+([0-9۰-۹٠-٩]{1,3})\\s*(?:عدد|تا|بسته|جفت)$")
     /** "5 شمع گلی", "5x شمع", "5 عدد شمع": quantity BEFORE the product name (needs whitespace after the number) */
     private val qtyLead = Regex("^([0-9۰-۹٠-٩]{1,3})\\s*(?:عدد|تا|[x×*])?\\s+(.+)$", RegexOption.IGNORE_CASE)
+    /** "شمع گلی 5", "Flower Candle 7": bare trailing number, only when it is the single number of the line (see parseItem) */
+    private val qtyBare = Regex("^(.*\\p{L}.*?)\\s+([0-9۰-۹٠-٩]{1,2})$")
+    private val anyDigit = Regex("[0-9۰-۹٠-٩]")
     private val mobile = Regex("(?:\\+98|0098|98)?0?(9\\d{9})")
 
     private fun clean(raw: String): String = raw
@@ -152,6 +155,15 @@ object OrderPaste {
             trailing && lead != null -> Unit
             trailing -> { qty = Fmt.toLatinDigits(m!!.groupValues[2]).toIntOrNull() ?: 1; t = m.groupValues[1].trim() }
             lead != null -> { qty = Fmt.toLatinDigits(lead.groupValues[1]).toIntOrNull() ?: 1; t = lead.groupValues[2].trim() }
+            else -> {
+                // no x / عدد marker: a 1-2 digit number at the very end counts only if the name has no other digit
+                // (so "iPhone 15 Pro" or "شمع ۲۰۰ گرمی" stay untouched; 3+ digits look like prices / ids and are never quantities)
+                val b = qtyBare.matchEntire(t)
+                if (b != null && !anyDigit.containsMatchIn(b.groupValues[1])) {
+                    val n = Fmt.toLatinDigits(b.groupValues[2]).toIntOrNull() ?: 0
+                    if (n in 1..99) { qty = n; t = b.groupValues[1].trim() }
+                }
+            }
         }
         return if (t.isEmpty()) null else PasteItem(t, qty.coerceIn(1, 999))
     }

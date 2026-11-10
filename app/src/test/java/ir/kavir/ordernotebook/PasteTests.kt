@@ -146,4 +146,30 @@ class PasteTests {
         val d = OrderPaste.parse("5 شمع × 2")
         assertEquals("5 شمع × 2", d.items.single().name); assertEquals(1, d.items.single().qty)
     }
+
+    @Test fun allBidirectionalFormats() {
+        val d = OrderPaste.parse(
+            "5 شمع گلی\nشمع گلی 5\n5 × شمع گلی\nشمع گلی × 5\n۵ شمع یخی\nشمع یخی ۵\n3x Flower Candle\nFlower Candle x7\nFlower Candle 4\n٢ x Rose"
+        )
+        assertEquals(listOf("شمع گلی", "شمع گلی", "شمع گلی", "شمع گلی", "شمع یخی", "شمع یخی", "Flower Candle", "Flower Candle", "Flower Candle", "Rose"), d.items.map { it.name })
+        assertEquals(listOf(5, 5, 5, 5, 5, 5, 3, 7, 4, 2), d.items.map { it.qty })
+    }
+
+    @Test fun pricesIdsAndNumbersInsideNamesAreNotQuantities() {
+        val d = OrderPaste.parse("شمع گلی 50000\niPhone 15 Pro\nشمع ۲۰۰ گرمی\nCandle 2 Pro 5\nOrder 12345\nشمع 120")
+        assertEquals(listOf(1, 1, 1, 1, 1, 1), d.items.map { it.qty })
+        assertEquals("شمع گلی 50000", d.items[0].name)
+        assertEquals("Candle 2 Pro 5", d.items[3].name)
+    }
+
+    @Test fun trailingQuantityKeepsEmojiAndOriginalText() {
+        val d = OrderPaste.parse("🕯️ شمع گلی ۵\nFlower 🌹 Candle 7\n🌹 5")
+        assertEquals(listOf("🕯️ شمع گلی", "Flower 🌹 Candle", "🌹 5"), d.items.map { it.name })
+        assertEquals(listOf(5, 7, 1), d.items.map { it.qty })
+    }
+
+    @Test fun directionMarksDoNotBreakDetection() {
+        val d = OrderPaste.parse("\u200f5\u200f شمع گلی\n\u200eFlower Candle x7\u200e")
+        assertEquals(listOf(5, 7), d.items.map { it.qty })
+    }
 }

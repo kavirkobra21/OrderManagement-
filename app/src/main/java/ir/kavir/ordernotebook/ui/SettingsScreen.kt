@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import ir.kavir.ordernotebook.data.Backup
@@ -302,7 +303,8 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
     // ---------------------------------------------------------------- Telegram message template dialog
     if (showTpl) {
         val tt = ir.kavir.ordernotebook.util.TelegramTemplate
-        var text by remember { mutableStateOf(prefs.telegramTemplate.ifBlank { tt.DEFAULT_TEXT }) }
+        var tv by remember { mutableStateOf(prefs.telegramTemplate.ifBlank { tt.DEFAULT_TEXT }.let { androidx.compose.ui.text.input.TextFieldValue(it, androidx.compose.ui.text.TextRange(it.length)) }) }
+        val text = tv.text
         var preview by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { showTpl = false },
@@ -310,13 +312,7 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!preview) {
-                        Field("متن پیام (فارسی، انگلیسی، عدد، ایموجی، چند خط)", text, { text = it }, singleLine = false, minLines = 8)
-                        Text("متغیرهای پشتیبانی‌شده (برای افزودن بزنید):", style = MaterialTheme.typography.bodySmall)
-                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            tt.PLACEHOLDERS.forEach { (k, d) ->
-                                AssistChip(onClick = { text = text + "{$k}" }, label = { Text("{$k} · $d", style = MaterialTheme.typography.labelSmall) })
-                            }
-                        }
+                        TemplateEditor("متن پیام (فارسی، انگلیسی، عدد، ایموجی، چند خط)", tv, { tv = it }, tt.PLACEHOLDERS)
                         Text("متغیر خالی یا ناشناخته در پیام نهایی نمایش داده نمی‌شود. با ذخیره، پیام‌های قبلی سفارش‌ها هم با همین قالب ویرایش می‌شوند.", style = MaterialTheme.typography.bodySmall)
                     } else Text(tt.render(text, tt.sample()))
                 }
@@ -331,7 +327,7 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
             dismissButton = {
                 Row {
                     TextButton(onClick = { preview = !preview }) { Text(if (preview) "ویرایش" else "پیش‌نمایش") }
-                    TextButton(onClick = { text = tt.DEFAULT_TEXT }) { Text("بازگردانی پیش‌فرض") }
+                    TextButton(onClick = { tv = androidx.compose.ui.text.input.TextFieldValue(tt.DEFAULT_TEXT, androidx.compose.ui.text.TextRange(tt.DEFAULT_TEXT.length)) }) { Text("بازگردانی پیش‌فرض") }
                 }
             },
         )
@@ -339,7 +335,8 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
 
     // ---------------------------------------------------------------- Edit order message dialog
     if (showForm) {
-        var text by remember { mutableStateOf(prefs.formTemplate) }
+        var tv by remember { mutableStateOf(prefs.formTemplate.let { androidx.compose.ui.text.input.TextFieldValue(it, androidx.compose.ui.text.TextRange(it.length)) }) }
+        val text = tv.text
         var preview by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { showForm = false },
@@ -347,13 +344,7 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!preview) {
-                        Field("متنی که برای مشتری فرستاده می‌شود", text, { text = it }, singleLine = false, minLines = 8)
-                        Text("متغیرها (برای افزودن بزنید):", style = MaterialTheme.typography.bodySmall)
-                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            ir.kavir.ordernotebook.util.FormTemplate.PLACEHOLDERS.forEach { (k, d) ->
-                                AssistChip(onClick = { text = text + "{$k}" }, label = { Text("{$k} · $d", style = MaterialTheme.typography.labelSmall) })
-                            }
-                        }
+                        TemplateEditor("متنی که برای مشتری فرستاده می‌شود", tv, { tv = it }, ir.kavir.ordernotebook.util.FormTemplate.PLACEHOLDERS)
                     } else {
                         Text(ir.kavir.ordernotebook.util.FormTemplate.render(text, ir.kavir.ordernotebook.util.FormTemplate.sample()))
                     }
@@ -369,7 +360,7 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
             dismissButton = {
                 Row {
                     TextButton(onClick = { preview = !preview }) { Text(if (preview) "ویرایش" else "پیش‌نمایش") }
-                    TextButton(onClick = { text = ir.kavir.ordernotebook.util.FormTemplate.DEFAULT }) { Text("بازگردانی پیش‌فرض") }
+                    TextButton(onClick = { val d = ir.kavir.ordernotebook.util.FormTemplate.DEFAULT; tv = androidx.compose.ui.text.input.TextFieldValue(d, androidx.compose.ui.text.TextRange(d.length)) }) { Text("بازگردانی پیش‌فرض") }
                 }
             },
         )
@@ -447,5 +438,26 @@ private suspend fun testGitHub(prefs: ir.kavir.ordernotebook.data.Prefs): String
         "✗ ${e.message}"
     } catch (e: IOException) {
         "✗ خطای اتصال: ${e.message}"
+    }
+}
+
+
+/** Multiline editor + placeholder chips. A chip inserts at the caret (or over the selection) and keeps the field focused. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun TemplateEditor(label: String, value: androidx.compose.ui.text.input.TextFieldValue, onValue: (androidx.compose.ui.text.input.TextFieldValue) -> Unit, placeholders: List<Pair<String, String>>) {
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    OutlinedTextField(
+        value = value, onValueChange = onValue, label = { Text(label) },
+        modifier = Modifier.fillMaxWidth().focusRequester(focus), minLines = 8, shape = RoundedCornerShape(16.dp),
+    )
+    Text("متغیرها (برای افزودن در محل مکان‌نما بزنید):", style = MaterialTheme.typography.bodySmall)
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        placeholders.forEach { (k, d) ->
+            AssistChip(onClick = {
+                onValue(ir.kavir.ordernotebook.util.PlaceholderInsert.insert(value, "{$k}"))
+                focus.requestFocus() // selection/caret live in the TextFieldValue, so the caret lands right after the inserted text
+            }, label = { Text("{$k} · $d", style = MaterialTheme.typography.labelSmall) })
+        }
     }
 }
