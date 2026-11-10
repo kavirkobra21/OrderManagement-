@@ -153,3 +153,56 @@ jobs:
             --target "${{ github.sha }}" \
             --title "Order Notebook ${VERSION}" \
             --generate-notes
+
+  # Publishes the same signed APK to the PUBLIC store-releases repo and registers/refreshes it in Kavir Store.
+  # No customer data is involved: only the APK and a fixed catalog entry leave this private repo.
+  publish-store:
+    needs: [build, release]
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      STORE_REPO: ${{ vars.KAVIR_STORE_REPO || 'kavirkobra19/KavirStore' }}
+      APP_REPO: ${{ vars.KAVIR_STORE_APP_REPO || 'kavirkobra19/OrderNotebook-Releases' }}
+      KAVIR_STORE_TOKEN: ${{ secrets.KAVIR_STORE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check store token
+        id: tok
+        run: |
+          if [ -z "$KAVIR_STORE_TOKEN" ]; then
+            echo "::warning::Secret KAVIR_STORE_TOKEN is not set - skipping Kavir Store publishing."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Download build artifact
+        if: steps.tok.outputs.ok == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: dist
+      - name: Publish APK to the public releases repo
+        if: steps.tok.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.KAVIR_STORE_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          PRIV=$(gh api "repos/$APP_REPO" -q .private)
+          if [ "$PRIV" != "false" ]; then echo "::error::$APP_REPO must be a PUBLIC repository"; exit 1; fi
+          APK="$(ls dist/*.apk | grep -v -- '-debug.apk' | head -1)"
+          [ -n "$APK" ] || { echo "::error::no release APK"; exit 1; }
+          TAG="v${VERSION}"
+          # plain notes on purpose: auto-generated notes would expose private commit titles
+          NOTES="Order Notebook ${VERSION}"
+          if gh release view "$TAG" -R "$APP_REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" -R "$APP_REPO" --clobber
+          else
+            gh release create "$TAG" "$APK" -R "$APP_REPO" --title "Order Notebook ${VERSION}" --notes "$NOTES"
+          fi
+      - name: Register / refresh in Kavir Store
+        if: steps.tok.outputs.ok == 'true'
+        working-directory: .github/scripts
+        run: python3 -m unittest test_register_in_store && python3 register_in_store.py

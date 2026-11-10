@@ -79,3 +79,11 @@ app/src/main/java/ir/kavir/ordernotebook/
 ## یادداشت‌ها
 - فونت: از فونت فارسی سیستم استفاده می‌شود. برای ظاهر دست‌نویس‌تر، یک فونت (مثلاً در `res/font`) اضافه و در `NotebookPage` به‌جای `Typeface.DEFAULT` استفاده کنید.
 - موقعیت دقیق کادرها در `NotebookPage.kt` (مختصات ۱۰۰۰×۱۴۰۰) قابل تنظیم است.
+
+## انتشار خودکار در Kavir Store
+بعد از هر Release موفق، job `publish-store` در `build.yml`:
+1. همان APK امضاشده را در ریپوی **عمومی** `kavirkobra19/OrderNotebook-Releases` منتشر می‌کند (ریپوی خصوصی سفارش‌ها دست‌نخورده می‌ماند؛ یادداشت Release عمداً ساده است تا عنوان commitها بیرون نرود).
+2. اگر برنامه هنوز در `catalog/sources.json` ریپوی KavirStore نیست، یک‌بار ثبتش می‌کند؛ در غیر این صورت رکورد را تغییر نمی‌دهد (بدون تکرار).
+3. به KavirStore اعلام می‌کند Sync کند. نام package، versionCode، نسخه، minSdk و لینک دانلود را خود فروشگاه از APK استخراج می‌کند و همان رکورد به‌روز می‌شود.
+
+**لازم است:** Secret به نام `KAVIR_STORE_TOKEN` (توکن fine-grained حساب `kavirkobra19` با *Contents: Read and write* روی دو ریپوی `KavirStore` و `OrderNotebook-Releases`)، و ساخت ریپوی عمومی `OrderNotebook-Releases` (می‌توان با Variableهای `KAVIR_STORE_APP_REPO` و `KAVIR_STORE_REPO` نام‌ها را عوض کرد). بدون Secret این مرحله فقط هشدار می‌دهد و بیلد خراب نمی‌شود. versionCode همان شماره‌ی اجرای CI است (همیشه افزایشی) و کلید امضا ثابت است.
