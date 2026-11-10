@@ -1,7 +1,7 @@
 name: Telegram Notify
 
 # Sends / edits the Telegram message, order image and photos of every order stored in orders/.
-# Needs two repository secrets:  BOT_TOKEN  and  CHAT_ID
+# Needs two repository secrets:  TELEGRAM_BOT_TOKEN  and  TELEGRAM_CHAT_ID  (the app creates them for you)
 # (Settings -> Secrets and variables -> Actions -> New repository secret)
 
 on:
@@ -47,7 +47,7 @@ jobs:
 
       - name: Send to Telegram
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GIT_COMMIT_STATE: "1"
         run: python .github/scripts/telegram_notify.py ${{ inputs.test && '--test' || '' }}

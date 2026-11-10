@@ -87,3 +87,10 @@ app/src/main/java/ir/kavir/ordernotebook/
 3. به KavirStore اعلام می‌کند Sync کند. نام package، versionCode، نسخه، minSdk و لینک دانلود را خود فروشگاه از APK استخراج می‌کند و همان رکورد به‌روز می‌شود.
 
 **لازم است:** Secret به نام `KAVIR_STORE_TOKEN` (توکن fine-grained حساب `kavirkobra19` با *Contents: Read and write* روی دو ریپوی `KavirStore` و `OrderNotebook-Releases`)، و ساخت ریپوی عمومی `OrderNotebook-Releases` (می‌توان با Variableهای `KAVIR_STORE_APP_REPO` و `KAVIR_STORE_REPO` نام‌ها را عوض کرد). بدون Secret این مرحله فقط هشدار می‌دهد و بیلد خراب نمی‌شود. versionCode همان شماره‌ی اجرای CI است (همیشه افزایشی) و کلید امضا ثابت است.
+
+## نسخه‌ی جدید: ریپوی جدا برای سفارش‌ها، Secretها از داخل برنامه
+- **دو ریپوی مستقل:** ریپوی برنامه فقط کد و Build دارد. هر کاربر ریپوی Private خودش را در «اتصال GitHub» می‌دهد و سفارش‌ها فقط آن‌جا ذخیره می‌شوند. به‌روزرسانی برنامه چیزی از سفارش‌ها را پاک یا بازنویسی نمی‌کند (دیتابیس با Migration نسخه ۳ به‌روز می‌شود).
+- **Telegram Settings:** Bot Token و Chat ID را وارد و «ذخیره و اتصال» را بزنید. برنامه ریپوی سفارش را بررسی می‌کند (در صورت اجازه‌ی توکن Private می‌سازد)، فایل‌های `.github/workflows/telegram.yml` و `.github/scripts/telegram_notify.py` را می‌سازد یا به‌روز می‌کند (بدون تکرار) و مقادیر را رمزنگاری‌شده (sealed box) در Secrets `TELEGRAM_BOT_TOKEN` و `TELEGRAM_CHAT_ID` ثبت و وجودشان را تأیید می‌کند. مقدار این رازها روی گوشی ذخیره یا لاگ نمی‌شود.
+- **دسترسی‌های توکن GitHub (fine-grained، فقط روی ریپوی سفارش):** Contents، Workflows و Secrets هر سه *Read and write*؛ Actions *Read and write* برای دکمه‌ی Test Connection. ساخت خودکار ریپو فقط با توکنی ممکن است که اجازه‌ی ساخت مخزن دارد؛ وگرنه ریپو را خودتان (Private) بسازید.
+- **ویرایش متن سفارش:** در تنظیمات؛ ویرایش، پیش‌نمایش، بازگردانی پیش‌فرض و متغیرهای `{name} {quantity} {items} {total} {id} {postal_code} {phone} {address} {date} {time} {order_id}`. متن در «کپی قالب» (Paste) و «کپی متن سفارش» (صفحه‌ی سفارش) استفاده می‌شود.
+- **فیلدهای جدید:** تعداد (روی سفارش)، آیدی و کد پستی (روی مشتری)؛ آدرس و تلفن حفظ شده‌اند.

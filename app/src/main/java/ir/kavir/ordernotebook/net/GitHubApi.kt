@@ -73,13 +73,16 @@ class GitHub(private val prefs: Prefs) {
 
     private fun err(code: Int, body: ByteArray): ApiException {
         val msg = try { JSONObject(String(body, Charsets.UTF_8)).optString("message") } catch (e: Exception) { "" }
-        val text = when (code) {
+        val text = when {
+            msg.contains("workflow", true) && (code == 403 || code == 404 || code == 422) ->
+                "توکن اجازه‌ی ساخت/ویرایش فایل‌های Workflow را ندارد (دسترسی Workflows: Read and write لازم است)"
+            else -> when (code) {
             401 -> "توکن GitHub نامعتبر یا منقضی است"
             403 -> if (msg.contains("rate limit", true)) "محدودیت تعداد درخواست GitHub؛ بعداً دوباره تلاش می‌شود"
             else "دسترسی رد شد (توکن باید دسترسی Contents: Read and write داشته باشد)"
             404 -> "مخزن یا فایل پیدا نشد (آدرس مخزن و دسترسی توکن را بررسی کنید)"
             else -> "خطای GitHub ($code): $msg"
-        }
+        } }
         return ApiException(code, text)
     }
 
@@ -151,6 +154,45 @@ class GitHub(private val prefs: Prefs) {
         if (code == 204) return
         if (code == 403 || code == 404) throw ApiException(code, "توکن اجازه‌ی اجرای Actions را ندارد (Actions: Read and write) یا workflow پیدا نشد")
         throw err(code, resp)
+    }
+
+    /** Creates the (private, empty) repository named in prefs under the token owner's account. Needs a token allowed to create repos. */
+    fun createPrivateRepo() {
+        val name = prefs.ghRepo.substringAfter('/')
+        val b = JSONObject().put("name", name).put("private", true).put("description", "Order Notebook data")
+        val (code, resp) = exec("POST", "https://api.github.com/user/repos", b.toString().toByteArray(Charsets.UTF_8))
+        if (code == 201) return
+        if (code == 403 || code == 404 || code == 422) throw ApiException(code,
+            "ساخت خودکار مخزن ممکن نشد (${JSONObject(String(resp, Charsets.UTF_8)).optString("message")}). مخزن Private را در GitHub بسازید و نامش را اینجا بدهید.")
+        throw err(code, resp)
+    }
+
+    /** Repository public key used to encrypt Actions secrets: (key_id, 32-byte key). */
+    fun actionsPublicKey(): Pair<String, ByteArray> {
+        val (code, body) = exec("GET", url("actions/secrets/public-key"))
+        if (code == 403 || code == 404) throw ApiException(code, "توکن دسترسی Secrets را ندارد (Secrets: Read and write) یا مخزن پیدا نشد")
+        if (code != 200) throw err(code, body)
+        val j = JSONObject(String(body, Charsets.UTF_8))
+        return j.getString("key_id") to Base64.decode(j.getString("key"), Base64.DEFAULT)
+    }
+
+    /** Creates or replaces an Actions secret. The value is encrypted on the phone and never logged. */
+    fun putSecret(name: String, value: String) {
+        val (keyId, key) = actionsPublicKey()
+        val enc = Base64.encodeToString(SealedBox.seal(value.toByteArray(Charsets.UTF_8), key), Base64.NO_WRAP)
+        val b = JSONObject().put("encrypted_value", enc).put("key_id", keyId)
+        val (code, resp) = exec("PUT", url("actions/secrets/$name"), b.toString().toByteArray(Charsets.UTF_8))
+        if (code == 201 || code == 204) return
+        if (code == 403 || code == 404) throw ApiException(code, "توکن دسترسی Secrets را ندارد (Secrets: Read and write)")
+        throw err(code, resp)
+    }
+
+    /** Names (never values) of the repository's Actions secrets. */
+    fun secretNames(): Set<String> {
+        val (code, body) = exec("GET", url("actions/secrets?per_page=100"))
+        if (code != 200) throw err(code, body)
+        val arr = JSONObject(String(body, Charsets.UTF_8)).optJSONArray("secrets") ?: JSONArray()
+        return (0 until arr.length()).map { arr.getJSONObject(it).optString("name") }.toSet()
     }
 
     /** ISO date of the newest commit touching [path], or null. */

@@ -244,7 +244,7 @@ class SyncManager(private val repo: Repo) {
 
     private fun customerJson(c: Customer) = JSONObject()
         .put("schema", 1).put("uid", c.uid).put("name", c.name).put("phone", c.phone)
-        .put("address", c.address).put("note", c.note).put("createdAt", c.createdAt)
+        .put("address", c.address).put("contactId", c.contactId).put("postalCode", c.postalCode).put("note", c.note).put("createdAt", c.createdAt)
         .put("updatedAt", c.updatedAt).put("deletedAt", c.deletedAt ?: JSONObject.NULL)
 
     private fun orderJson(o: Order, c: Customer, atts: List<Pair<Attachment, String>>): JSONObject {
@@ -256,7 +256,7 @@ class SyncManager(private val repo: Repo) {
             .put("schema", 1).put("uid", o.uid).put("syncNo", o.syncNo).put("customerUid", c.uid)
             .put("invoiceNo", o.invoiceNo).put("dateText", o.dateText).put("deliveryText", o.deliveryText)
             .put("description", o.description).put("notes", o.notes).put("items", items)
-            .put("total", o.total).put("deposit", o.deposit).put("remaining", o.remaining)
+            .put("quantity", o.quantity).put("total", o.total).put("deposit", o.deposit).put("remaining", o.remaining)
             .put("status", JSONObject()
                 .put("registered", o.stRegistered).put("inProgress", o.stInProgress).put("ready", o.stReady)
                 .put("delivered", o.stDelivered).put("paid", o.paid).put("depositReceived", o.depositReceived)
@@ -308,6 +308,7 @@ class SyncManager(private val repo: Repo) {
         val lc = dao.customerByUid(cuid)
         val rc = Customer(
             id = lc?.id ?: 0, name = cj.optString("name"), phone = cj.optString("phone"), address = cj.optString("address"),
+            contactId = cj.optString("contactId"), postalCode = cj.optString("postalCode"),
             note = cj.optString("note"), createdAt = cj.optLong("createdAt"),
             deletedAt = if (cj.isNull("deletedAt")) null else cj.optLong("deletedAt"),
             uid = cuid, updatedAt = cj.optLong("updatedAt"),
@@ -329,7 +330,7 @@ class SyncManager(private val repo: Repo) {
             id = lo?.id ?: 0, customerId = customerId, invoiceNo = oj.optString("invoiceNo"), dateText = oj.optString("dateText"),
             deliveryText = oj.optString("deliveryText"), description = oj.optString("description"),
             itemsText = OrderItem.encode(itemList), notes = oj.optString("notes"),
-            total = oj.optLong("total"), deposit = oj.optLong("deposit"),
+            quantity = oj.optInt("quantity", 1).coerceAtLeast(1), total = oj.optLong("total"), deposit = oj.optLong("deposit"),
             stRegistered = st.optBoolean("registered", true), stInProgress = st.optBoolean("inProgress"),
             stReady = st.optBoolean("ready"), stDelivered = st.optBoolean("delivered"),
             paid = st.optBoolean("paid"), depositReceived = st.optBoolean("depositReceived"), settled = st.optBoolean("settled"),

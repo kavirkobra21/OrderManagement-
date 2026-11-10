@@ -19,6 +19,10 @@ data class Customer(
     /** stable id used for GitHub sync / duplicate protection */
     val uid: String = UUID.randomUUID().toString(),
     val updatedAt: Long = System.currentTimeMillis(),
+    /** Telegram / Discord ID of the customer (labelled just "آیدی") */
+    val contactId: String = "",
+    /** postal code, kept separate from the address */
+    val postalCode: String = "",
 )
 
 @Entity(
@@ -36,6 +40,8 @@ data class Order(
     /** items serialised by [OrderItem.encode] */
     val itemsText: String = "",
     val notes: String = "",
+    /** number of units ordered (structured data, not text in the description) */
+    val quantity: Int = 1,
     val total: Long = 0,
     val deposit: Long = 0,
     val stRegistered: Boolean = true,

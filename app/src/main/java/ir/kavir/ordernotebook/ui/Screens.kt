@@ -104,6 +104,8 @@ fun CustomerFormScreen(repo: Repo, nav: Nav, id: Long?) {
             Field("نام مشتری", c.name, { c = c.copy(name = it) })
             Field("شماره تماس", c.phone, { c = c.copy(phone = it) }, keyboard = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Phone))
             Field("آدرس", c.address, { c = c.copy(address = it) }, singleLine = false, minLines = 3)
+            Field("کد پستی", c.postalCode, { c = c.copy(postalCode = Fmt.toLatinDigits(it).filter { ch -> ch.isDigit() }.take(10)) }, keyboard = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number))
+            Field("آیدی", c.contactId, { c = c.copy(contactId = it) })
             Field("یادداشت اختصاصی", c.note, { c = c.copy(note = it) }, singleLine = false, minLines = 3)
             Button(
                 onClick = {
@@ -136,6 +138,8 @@ fun CustomerDetailScreen(repo: Repo, nav: Nav, id: Long, snack: SnackbarHostStat
                 Section("اطلاعات مشتری") {
                     Text("شماره تماس: ${cust.phone}")
                     Text("آدرس: ${cust.address}")
+                    if (cust.postalCode.isNotBlank()) Text("کد پستی: ${cust.postalCode}")
+                    if (cust.contactId.isNotBlank()) Text("آیدی: ${cust.contactId}")
                     if (cust.note.isNotBlank()) Text("یادداشت: ${cust.note}")
                 }
             }

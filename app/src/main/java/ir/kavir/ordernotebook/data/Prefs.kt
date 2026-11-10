@@ -27,6 +27,8 @@ class Prefs(ctx: Context) {
 
     var telegramLang: String get() = s("tgLang", "fa"); set(v) = sp.edit().putString("tgLang", v).apply()
     var autoSend: Boolean get() = sp.getBoolean("autoSend", true); set(v) = sp.edit().putBoolean("autoSend", v).apply()
+    /** customer-facing order text with {placeholders}; edited in Settings */
+    var formTemplate: String get() = s("formTemplate", ir.kavir.ordernotebook.util.FormTemplate.DEFAULT); set(v) = sp.edit().putString("formTemplate", v).apply()
     var ghToken: String get() = s("ghToken"); set(v) = sp.edit().putString("ghToken", v.trim()).apply()
     var ghRepo: String get() = s("ghRepo", "kavirkobra21/OrderManagement-"); set(v) = sp.edit().putString("ghRepo", ir.kavir.ordernotebook.net.GitHubApi.parseRepo(v)).apply()
     var ghLastSync: Long get() = sp.getLong("ghLastSync", 0); set(v) = sp.edit().putLong("ghLastSync", v).apply()

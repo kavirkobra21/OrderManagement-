@@ -28,6 +28,7 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -36,6 +37,7 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
 
     // ---- Telegram
     var showTg by remember { mutableStateOf(false) }
+    var showForm by remember { mutableStateOf(false) }
 
     // ---- GitHub connection (entered once, stored encrypted)
     var ghEditing by remember { mutableStateOf(!prefs.ghConfigured) }
@@ -80,11 +82,12 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
             // ============================================================ Telegram (sent by GitHub Actions)
             Section("تلگرام (ارسال با GitHub Actions)") {
                 Text(
-                    "متن سفارش و همه‌ی عکس‌ها فقط توسط GitHub Actions به تلگرام ارسال می‌شوند. Bot Token و Chat ID در GitHub Secrets " +
-                        "نگهداری می‌شوند (BOT_TOKEN و CHAT_ID) و داخل برنامه ذخیره نمی‌شوند.",
+                    "متن سفارش و همه‌ی عکس‌ها فقط توسط GitHub Actions به تلگرام ارسال می‌شوند. Bot Token و Chat ID را یک‌بار اینجا وارد کنید؛ " +
+                        "برنامه آن‌ها را رمزنگاری و در Secrets مخزن سفارش‌های شما ثبت می‌کند و روی گوشی نگه نمی‌دارد.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Button(onClick = { showTg = true }, Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) { Text("Telegram Settings") }
+                OutlinedButton(onClick = { showForm = true }, Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) { Text("ویرایش متن سفارش") }
             }
 
             // ============================================================ GitHub connection
@@ -207,13 +210,24 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
     if (showTg) {
         var dLang by remember { mutableStateOf(prefs.telegramLang) }
         var dOn by remember { mutableStateOf(prefs.autoSend) }
+        var botToken by remember { mutableStateOf("") }
+        var chatId by remember { mutableStateOf("") }
+        var steps by remember { mutableStateOf<List<ir.kavir.ordernotebook.net.RepoSetup.Step>>(emptyList()) }
         var status by remember { mutableStateOf("") }
-        var testing by remember { mutableStateOf(false) }
+        var working by remember { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = { showTg = false },
+            onDismissRequest = { if (!working) showTg = false },
             title = { Text("Telegram Settings") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Field("Telegram Bot Token", botToken, { botToken = it.trim() }, transformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+                    Field("Telegram Chat ID", chatId, { chatId = Fmt.toLatinDigits(it).trim() })
+                    Text(
+                        "با «ذخیره و اتصال»، مخزن سفارش‌ها (${prefs.ghRepo}) آماده می‌شود: Workflow و اسکریپت ساخته یا به‌روز می‌شوند و " +
+                            "TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID در Secrets ثبت و بررسی می‌شوند. توکن GitHub باید این دسترسی‌ها را داشته باشد: " +
+                            "Contents، Workflows، Secrets (هر سه Read and write) و Actions (برای آزمایش). ربات را در تلگرام Start کنید.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                     Text("زبان پیام‌ها")
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(dLang == "fa", { dLang = "fa" }); Text("فارسی")
@@ -223,13 +237,20 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Switch(dOn, { dOn = it }); Spacer(Modifier.width(8.dp)); Text("ارسال خودکار سفارش‌ها")
                     }
-                    Text(
-                        "برای فعال شدن: در GitHub → Settings → Secrets and variables → Actions دو Secret بسازید: " +
-                            "BOT_TOKEN (توکن ربات) و CHAT_ID. ربات را در تلگرام Start کنید.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    OutlinedButton(enabled = !testing && prefs.ghConfigured, onClick = {
-                        testing = true; status = "در حال ارسال درخواست…"
+                    Button(enabled = !working && prefs.ghConfigured && botToken.isNotBlank() && chatId.isNotBlank(), onClick = {
+                        working = true; status = "در حال اتصال به GitHub…"; steps = emptyList()
+                        prefs.telegramLang = dLang; prefs.autoSend = dOn
+                        scope.launch {
+                            val res = ir.kavir.ordernotebook.net.RepoSetup(ctx, prefs).run(botToken, chatId)
+                            steps = res
+                            val ok = res.isNotEmpty() && res.all { it.ok } && res.any { it.title.contains("Secrets") }
+                            status = if (ok) "✓ اتصال کامل شد" else "✗ اتصال ناموفق بود"
+                            if (ok) { botToken = ""; chatId = ""; repo.enqueueConfig() } // secrets are not kept on the phone
+                            working = false
+                        }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("ذخیره و اتصال") }
+                    OutlinedButton(enabled = !working && prefs.ghConfigured, onClick = {
+                        working = true; status = "در حال ارسال درخواست…"
                         scope.launch {
                             status = withContext(Dispatchers.IO) {
                                 try {
@@ -239,21 +260,60 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                                 } catch (e: GitHub.ApiException) { "✗ ${e.message}" }
                                 catch (e: IOException) { "✗ خطای اتصال: ${e.message}" }
                             }
-                            testing = false
+                            working = false
                         }
-                    }) { Text("Test Connection") }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Test Connection") }
                     if (!prefs.ghConfigured) Text("ابتدا اتصال GitHub را تنظیم کنید.", style = MaterialTheme.typography.bodySmall)
+                    steps.forEach { Text((if (it.ok) "✓ " else "✗ ") + it.title + (if (it.detail.isNotBlank()) " — ${it.detail}" else ""), style = MaterialTheme.typography.bodySmall) }
                     if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(enabled = !working, onClick = {
                     prefs.telegramLang = dLang; prefs.autoSend = dOn
                     showTg = false
                     scope.launch { repo.enqueueConfig(); snack.showSnackbar("تنظیمات تلگرام ذخیره شد") }
                 }) { Text("Save Settings") }
             },
-            dismissButton = { TextButton(onClick = { showTg = false }) { Text("انصراف") } },
+            dismissButton = { TextButton(enabled = !working, onClick = { showTg = false }) { Text("بستن") } },
+        )
+    }
+
+    // ---------------------------------------------------------------- Edit order message dialog
+    if (showForm) {
+        var text by remember { mutableStateOf(prefs.formTemplate) }
+        var preview by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { showForm = false },
+            title = { Text("ویرایش متن سفارش") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!preview) {
+                        Field("متنی که برای مشتری فرستاده می‌شود", text, { text = it }, singleLine = false, minLines = 8)
+                        Text("متغیرها (برای افزودن بزنید):", style = MaterialTheme.typography.bodySmall)
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            ir.kavir.ordernotebook.util.FormTemplate.PLACEHOLDERS.forEach { (k, d) ->
+                                AssistChip(onClick = { text = text + "{$k}" }, label = { Text("{$k} · $d", style = MaterialTheme.typography.labelSmall) })
+                            }
+                        }
+                    } else {
+                        Text(ir.kavir.ordernotebook.util.FormTemplate.render(text, ir.kavir.ordernotebook.util.FormTemplate.sample()))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    prefs.formTemplate = text.ifBlank { ir.kavir.ordernotebook.util.FormTemplate.DEFAULT }
+                    showForm = false
+                    scope.launch { snack.showSnackbar("متن سفارش ذخیره شد") }
+                }) { Text("ذخیره") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { preview = !preview }) { Text(if (preview) "ویرایش" else "پیش‌نمایش") }
+                    TextButton(onClick = { text = ir.kavir.ordernotebook.util.FormTemplate.DEFAULT }) { Text("بازگردانی پیش‌فرض") }
+                }
+            },
         )
     }
 

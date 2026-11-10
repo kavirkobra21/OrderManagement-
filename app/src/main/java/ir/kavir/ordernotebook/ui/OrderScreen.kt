@@ -129,6 +129,7 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
 
             Section("مشخصات سفارش") {
                 Field("تاریخ", order.dateText, { order = order.copy(dateText = it) })
+                Field("تعداد", order.quantity.toString(), { order = order.copy(quantity = Fmt.toLatinDigits(it).filter { ch -> ch.isDigit() }.take(4).toIntOrNull()?.coerceAtLeast(1) ?: 1) }, keyboard = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number))
                 Field("شماره فاکتور", order.invoiceNo, { order = order.copy(invoiceNo = it) })
                 Field("زمان تحویل", order.deliveryText, { order = order.copy(deliveryText = it) })
                 Field("نکات سفارش", order.notes, { order = order.copy(notes = it) }, singleLine = false, minLines = 2)
@@ -210,6 +211,20 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
             }
 
             Section("ذخیره و خروجی") {
+                val clip = androidx.compose.ui.platform.LocalClipboardManager.current
+                OutlinedButton(onClick = {
+                    val cust = customer
+                    val list = items.filter { it.title.isNotBlank() }
+                    val vals = ir.kavir.ordernotebook.util.FormTemplate.now() + mapOf(
+                        "name" to cust?.name.orEmpty(), "id" to cust?.contactId.orEmpty(), "phone" to cust?.phone.orEmpty(),
+                        "postal_code" to cust?.postalCode.orEmpty(), "address" to cust?.address.orEmpty(),
+                        "quantity" to order.quantity.toString(), "order_id" to order.invoiceNo,
+                        "items" to list.joinToString("\n") { "- ${it.title} — ${Fmt.toman(it.price * it.qty)}" },
+                        "total" to Fmt.toman(Fmt.parseMoney(totalS)),
+                    )
+                    clip.setText(androidx.compose.ui.text.AnnotatedString(ir.kavir.ordernotebook.util.FormTemplate.render(repo.prefs.formTemplate, vals)))
+                    scope.launch { snack.showSnackbar("متن سفارش کپی شد") }
+                }, Modifier.fillMaxWidth()) { Text("کپی متن سفارش (قالب قابل ویرایش در تنظیمات)") }
                 Button(
                     onClick = {
                         scope.launch {

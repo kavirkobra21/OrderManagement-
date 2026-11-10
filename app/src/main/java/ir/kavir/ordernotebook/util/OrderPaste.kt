@@ -6,6 +6,9 @@ data class PasteDraft(
     val name: String = "",
     val phone: String = "",
     val address: String = "",
+    val contactId: String = "",
+    val postalCode: String = "",
+    val quantity: Int = 1,
     val notes: String = "",
     val items: List<PasteItem> = emptyList(),
 )
@@ -17,9 +20,9 @@ data class PasteDraft(
  * Prices are never read; the user enters them afterwards.
  */
 object OrderPaste {
-    const val TEMPLATE = "نام مشتری:\nشماره تماس:\nآدرس:\nنکات سفارش:\n\nآیتم‌ها:\n1.\n2.\n3."
+    const val TEMPLATE = FormTemplate.DEFAULT
 
-    private enum class Key { NAME, PHONE, ADDRESS, NOTES, ITEMS }
+    private enum class Key { NAME, PHONE, ADDRESS, NOTES, ITEMS, ID, POSTAL, QTY }
 
     private const val SEP = "[:：﹕]"
     private const val ZW = "\\u200c\\s"
@@ -27,6 +30,9 @@ object OrderPaste {
         Key.NOTES to "نکات(?:[$ZW]*سفارش)?|توضیحات(?:[$ZW]*سفارش)?|توضیح|یادداشت",
         Key.ADDRESS to "آدرس|نشانی",
         Key.ITEMS to "آیتم[$ZW]*ها|آیتم|اقلام|سفارش[$ZW]*ها|سفارشات|محصولات|لیست[$ZW]*سفارش",
+        Key.POSTAL to "کد[$ZW]*پستی|کدپستی|پستی|[Pp]ostal[$ZW]*[Cc]ode",
+        Key.QTY to "تعداد(?:[$ZW]*سفارش)?",
+        Key.ID to "آی[$ZW]*دی(?:[$ZW]*تلگرام|[$ZW]*دیسکورد)?|ایدی|[Ii][Dd]|تلگرام|دیسکورد|[Tt]elegram|[Dd]iscord",
         Key.PHONE to "شماره[$ZW]*تماس|شماره[$ZW]*تلفن|شماره[$ZW]*موبایل|شماره[$ZW]*همراه|تلفن[$ZW]*همراه|تلفن|موبایل|همراه|تماس|شماره",
         Key.NAME to "نام[$ZW]*و[$ZW]*نام[$ZW]*خانوادگی|نام(?:[$ZW]*مشتری)?|اسم(?:[$ZW]*مشتری)?|مشتری",
     ).map { (k, p) -> k to Regex("^\\s*(?:[-•*▪●]\\s*)?(?:$p)\\s*$SEP\\s*(.*)$") }
@@ -57,7 +63,7 @@ object OrderPaste {
             }
             if (line.isBlank()) continue
             // name and phone are single-line fields; only address / notes / items continue on the next lines
-            if (cur != null && cur != Key.NAME && cur != Key.PHONE) buf.getOrPut(cur) { mutableListOf() }.add(line.trim())
+            if (cur != null && cur != Key.NAME && cur != Key.PHONE && cur != Key.ID && cur != Key.POSTAL && cur != Key.QTY) buf.getOrPut(cur) { mutableListOf() }.add(line.trim())
             else if (startsNumbered.containsMatchIn(line)) unlabeledNumbered.add(line)
         }
 
@@ -72,6 +78,9 @@ object OrderPaste {
         return PasteDraft(
             name = buf[Key.NAME]?.joinToString(" ").orEmpty().trim(),
             phone = phone,
+            contactId = buf[Key.ID]?.joinToString(" ").orEmpty().trim(),
+            postalCode = Fmt.toLatinDigits(buf[Key.POSTAL]?.joinToString("").orEmpty()).filter { it.isDigit() }.take(10),
+            quantity = Fmt.toLatinDigits(buf[Key.QTY]?.joinToString(" ").orEmpty()).filter { it.isDigit() }.take(4).toIntOrNull()?.coerceAtLeast(1) ?: 1,
             address = buf[Key.ADDRESS]?.joinToString(" ").orEmpty().trim(),
             notes = buf[Key.NOTES]?.joinToString("\n").orEmpty().trim(),
             items = items,

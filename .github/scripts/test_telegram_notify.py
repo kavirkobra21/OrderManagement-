@@ -5,7 +5,10 @@ import os
 import shutil
 import tempfile
 import threading
+import sys
 import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "app", "src", "main", "assets", "github"))
 
 # ---- fake Telegram Bot API (started before the module under test reads its environment)
 REQUESTS = []
@@ -41,8 +44,8 @@ SERVER = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 threading.Thread(target=SERVER.serve_forever, daemon=True).start()
 os.environ["TELEGRAM_API_BASE"] = f"http://127.0.0.1:{SERVER.server_port}"
 os.environ["RETRY_SLEEP_SCALE"] = "0"
-os.environ["BOT_TOKEN"] = "TEST:TOKEN"
-os.environ["CHAT_ID"] = "123"
+os.environ["TELEGRAM_BOT_TOKEN"] = "TEST:TOKEN"
+os.environ["TELEGRAM_CHAT_ID"] = "123"
 os.environ.pop("GIT_COMMIT_STATE", None)
 
 import telegram_notify as tn  # noqa: E402
@@ -98,9 +101,12 @@ class Base(unittest.TestCase):
 class MessageFormat(unittest.TestCase):
     def test_persian_message(self):
         o = order(description="با احتیاط", notes="تحویل صبح")
-        msg = tn.build_message(o, {"name": "میزو", "phone": "۰۹۶۴۶۴۹۴۹۴۹", "address": "مشهد"}, True)
+        msg = tn.build_message(o, {"name": "میزو", "phone": "۰۹۶۴۶۴۹۴۹۴۹", "address": "مشهد", "contactId": "@mizo", "postalCode": "۱۲۳۴۵۶۷۸۹۰"}, True)
         self.assertIn("سفارش ثبت شد:", msg)
         self.assertIn("(شناسه سفارش): #7", msg)
+        self.assertIn("(آیدی): @mizo", msg)
+        self.assertIn("(کد پستی): 1234567890", msg)
+        self.assertIn("(تعداد): 1", msg)
         self.assertIn("(شماره تماس): 09646494949", msg)          # English digits
         self.assertIn("- طراحی لوگو — 100,000 تومان", msg)        # price next to its item
         self.assertIn("- کاور ×2 — 10,000 تومان", msg)             # line total for qty 2
@@ -208,12 +214,12 @@ class Config(Base):
         self.assertEqual(methods(), [])
 
     def test_missing_secrets_fails_clearly_only_when_there_is_work(self):
-        saved = os.environ.pop("BOT_TOKEN")
+        saved = os.environ.pop("TELEGRAM_BOT_TOKEN")
         try:
             self.assertEqual(self.run_main(), 2)
             self.assertEqual(tn.main(["--orders", os.path.join(self.tmp, "empty"), "--config", "x"]), 0)
         finally:
-            os.environ["BOT_TOKEN"] = saved
+            os.environ["TELEGRAM_BOT_TOKEN"] = saved
 
     def test_language_from_config(self):
         cfg = os.path.join(self.tmp, "notify.json")

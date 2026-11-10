@@ -99,14 +99,14 @@ interface AppDao {
     @Query("DELETE FROM customers") suspend fun wipeCustomers()
 }
 
-@Database(entities = [Customer::class, Order::class, Attachment::class, PendingOp::class], version = 2, exportSchema = false)
+@Database(entities = [Customer::class, Order::class, Attachment::class, PendingOp::class], version = 3, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): AppDao
 
     companion object {
         @Volatile private var inst: AppDb? = null
         fun get(ctx: Context): AppDb = inst ?: synchronized(this) {
-            inst ?: Room.databaseBuilder(ctx.applicationContext, AppDb::class.java, "ordernotebook.db").addMigrations(MIGRATION_1_2).build().also { inst = it }
+            inst ?: Room.databaseBuilder(ctx.applicationContext, AppDb::class.java, "ordernotebook.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { inst = it }
         }
     }
 }
@@ -139,5 +139,14 @@ val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
                 "`orderId` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `attempts` INTEGER NOT NULL, `lastError` TEXT NOT NULL)"
         )
         db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_pending_ops_kind_orderId` ON `pending_ops` (`kind`, `orderId`)")
+    }
+}
+
+/** v2 -> v3: customer ID + postal code, order quantity. Existing rows get empty ID/postal code and quantity 1. */
+val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE customers ADD COLUMN contactId TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE customers ADD COLUMN postalCode TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE orders ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1")
     }
 }

@@ -75,6 +75,7 @@ dependencies {
 
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1") // sealed box for GitHub Secrets
 
     testImplementation("junit:junit:4.13.2")
 }

@@ -20,6 +20,7 @@ import ir.kavir.ordernotebook.data.Order
 import ir.kavir.ordernotebook.data.OrderItem
 import ir.kavir.ordernotebook.data.Repo
 import ir.kavir.ordernotebook.util.Fmt
+import ir.kavir.ordernotebook.util.FormTemplate
 import ir.kavir.ordernotebook.util.OrderPaste
 import kotlinx.coroutines.launch
 
@@ -38,12 +39,16 @@ fun PasteOrderScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
     var phone by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
+    var contactId by remember { mutableStateOf("") }
+    var postal by remember { mutableStateOf("") }
+    var quantity by remember { mutableStateOf("1") }
     var items by remember { mutableStateOf(listOf<OrderItem>()) }
     var busy by remember { mutableStateOf(false) }
 
     fun parseNow(text: String) {
         val d = OrderPaste.parse(text)
         name = d.name; phone = d.phone; address = d.address; notes = d.notes
+        contactId = d.contactId; postal = d.postalCode; quantity = d.quantity.toString()
         items = d.items.map { OrderItem(it.name, it.qty, 0) }.ifEmpty { listOf(OrderItem("", 1, 0)) }
         parsed = true
     }
@@ -66,7 +71,7 @@ fun PasteOrderScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                     OutlinedButton(onClick = { parseNow(raw) }, enabled = raw.isNotBlank()) { Text("استخراج") }
                 }
                 OutlinedButton(onClick = {
-                    clipboard.setText(AnnotatedString(OrderPaste.TEMPLATE))
+                    clipboard.setText(AnnotatedString(FormTemplate.render(repo.prefs.formTemplate, FormTemplate.now())))
                     scope.launch { snack.showSnackbar("قالب فرم کپی شد؛ برای مشتری بفرستید") }
                 }, Modifier.fillMaxWidth()) { Text("کپی قالب فرم برای مشتری") }
                 if (!parsed) OutlinedButton(onClick = { parseNow("") }, Modifier.fillMaxWidth()) { Text("ثبت دستی بدون متن") }
@@ -76,6 +81,9 @@ fun PasteOrderScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                 Section("پیش‌نویس سفارش — قبل از ثبت بررسی و ویرایش کنید") {
                     Field("نام مشتری", name, { name = it })
                     Field("شماره تماس", phone, { phone = Fmt.toLatinDigits(it) }, keyboard = KeyboardOptions(keyboardType = KeyboardType.Phone))
+                    Field("آیدی", contactId, { contactId = it })
+                    Field("کد پستی", postal, { postal = Fmt.toLatinDigits(it).filter { ch -> ch.isDigit() }.take(10) }, keyboard = KeyboardOptions(keyboardType = KeyboardType.Number))
+                    Field("تعداد", quantity, { quantity = Fmt.toLatinDigits(it).filter { ch -> ch.isDigit() }.take(4) }, keyboard = KeyboardOptions(keyboardType = KeyboardType.Number))
                     Field("آدرس", address, { address = it }, singleLine = false, minLines = 2)
                     Field("نکات سفارش", notes, { notes = it }, singleLine = false, minLines = 2)
                 }
@@ -107,12 +115,12 @@ fun PasteOrderScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                             // same phone number = same customer (no duplicate customers)
                             val existing = if (ph.isBlank()) null
                             else repo.dao.allCustomers().firstOrNull { it.deletedAt == null && Fmt.toLatinDigits(it.phone) == ph }
-                            val cid = existing?.id ?: repo.saveCustomer(Customer(name = name.trim(), phone = ph, address = address.trim()))
+                            val cid = existing?.id ?: repo.saveCustomer(Customer(name = name.trim(), phone = ph, address = address.trim(), contactId = contactId.trim(), postalCode = postal))
                             val clean = items.filter { it.title.isNotBlank() }
                             val invoice = Fmt.toPersianDigits((repo.prefs.invoiceCounter + 1).toString())
                             val oid = repo.saveOrder(
                                 Order(
-                                    customerId = cid, invoiceNo = invoice, dateText = Fmt.todayJalali(), notes = notes.trim(),
+                                    customerId = cid, invoiceNo = invoice, dateText = Fmt.todayJalali(), notes = notes.trim(), quantity = quantity.toIntOrNull()?.coerceAtLeast(1) ?: 1,
                                     itemsText = OrderItem.encode(clean), total = clean.sumOf { it.price * it.qty },
                                 )
                             )

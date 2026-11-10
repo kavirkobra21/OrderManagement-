@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Send / edit Telegram notifications for orders stored in orders/<n>/ (runs in GitHub Actions).
 
-Secrets come from the environment (GitHub Secrets): BOT_TOKEN, CHAT_ID. Standard library only.
+Secrets come from the environment (GitHub Secrets): TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (old names BOT_TOKEN / CHAT_ID still work). Standard library only.
 
 Per order folder this script keeps orders/<n>/telegram.json:
   messageId / textHash         the text message (edited in place when the order changes)
@@ -95,6 +95,9 @@ def build_message(o, c, fa=True):
     if fa:
         out += ["سفارش ثبت شد:", ""]
         out += [f"(شناسه سفارش): #{no}", f"(نام مشتری): {c.get('name', '')}", f"(شماره تماس): {phone}",
+                *([f"(آیدی): {c.get('contactId')}"] if c.get("contactId") else []),
+                *([f"(کد پستی): {to_latin(c.get('postalCode'))}"] if c.get("postalCode") else []),
+                f"(تعداد): {to_latin(o.get('quantity') or 1)}",
                 f"(شماره فاکتور): {o.get('invoiceNo', '')}", f"(تاریخ): {o.get('dateText', '')}",
                 f"(زمان تحویل): {o.get('deliveryText', '')}", f"(آدرس): {c.get('address', '')}"]
         if lines:
@@ -112,6 +115,9 @@ def build_message(o, c, fa=True):
     else:
         out += ["WORK ORDER NOTIFICATION", ""]
         out += [f"Order ID: #{no}", f"Customer Name: {c.get('name', '')}", f"Phone Number: {phone}",
+                *([f"ID: {c.get('contactId')}"] if c.get("contactId") else []),
+                *([f"Postal Code: {to_latin(c.get('postalCode'))}"] if c.get("postalCode") else []),
+                f"Quantity: {to_latin(o.get('quantity') or 1)}",
                 f"Invoice Number: {to_latin(o.get('invoiceNo', ''))}", f"Order Date: {o.get('dateText', '')}",
                 f"Delivery Date: {o.get('deliveryText', '')}", f"Address: {c.get('address', '')}"]
         if lines:
@@ -379,9 +385,10 @@ def main(argv=None):
         print("No orders yet; nothing to do.")
         return 0
 
-    token, chat = os.environ.get("BOT_TOKEN", "").strip(), os.environ.get("CHAT_ID", "").strip()
+    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("BOT_TOKEN") or "").strip()
+    chat = (os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("CHAT_ID") or "").strip()
     if not token or not chat:
-        print("::error::GitHub Secrets BOT_TOKEN and CHAT_ID are not set "
+        print("::error::GitHub Secrets TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are not set "
               "(Settings → Secrets and variables → Actions → New repository secret).")
         return 2
     tg = Telegram(token, chat)
