@@ -1,4 +1,5 @@
 {
   "enabled": true,
-  "lang": "fa"
+  "lang": "fa",
+  "template": "🪷 فاکتور جامع سفارش ثبت شد🕯\n✨آیدی تلگرام : {customer_id}\n✨نام مشتری: {customer_name}\n✨شماره تماس: {phone}\n✨کد پستی: {postal_code}\n✨آدرس: {address}\n------------------\n🍀شماره فاکتور: {invoice}#\n🌸تاریخ امروز : {created_at}\n🌺زمان تحویل: \n{delivery}\n🌼سفارش‌ها:\n{items}\n\n\nتوضیحات:\n{description}\n\n\n🧮هزینه کل: {total_price}\n\n📥بیعانه: {deposit}\n\n📤باقیمانده: {remaining}\nوضعیت پرداخت: {status}\nوضعیت سفارش: {status}"
 }
