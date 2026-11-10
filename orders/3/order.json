@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "uid": "e4d2d2c4-a0c3-4323-9ec3-b1fe8761e61e",
+  "syncNo": 3,
+  "customerUid": "5e204906-3294-49d9-bd39-7a0e217229d7",
+  "invoiceNo": "۳",
+  "dateText": "۱۴۰۵\/۰۸\/۱۹",
+  "deliveryText": "",
+  "description": "",
+  "notes": "",
+  "items": [
+    {
+      "title": "شمع یخی",
+      "qty": 1,
+      "price": 20000
+    },
+    {
+      "title": "شمع گلی",
+      "qty": 1,
+      "price": 50000
+    }
+  ],
+  "quantity": 1,
+  "total": 70000,
+  "deposit": 0,
+  "remaining": 70000,
+  "status": {
+    "registered": true,
+    "inProgress": false,
+    "ready": false,
+    "delivered": false,
+    "paid": false,
+    "depositReceived": false,
+    "settled": false
+  },
+  "createdAt": 1794335732705,
+  "updatedAt": 1794335732708,
+  "telegram": {
+    "messageId": 0,
+    "photoMessageId": 0,
+    "imageHash": ""
+  },
+  "attachments": []
+}
