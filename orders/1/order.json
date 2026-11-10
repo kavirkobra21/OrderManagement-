@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "uid": "a32d680f-dca2-401c-a28d-831b6d2437a1",
+  "syncNo": 1,
+  "customerUid": "47092809-3d34-44c0-bbfe-67418a80e70d",
+  "invoiceNo": "۱",
+  "dateText": "۱۴۰۵\/۰۸\/۱۹",
+  "deliveryText": "",
+  "description": "",
+  "notes": "سفارشی",
+  "items": [
+    {
+      "title": "نیگا",
+      "qty": 1,
+      "price": 0
+    },
+    {
+      "title": "اسب",
+      "qty": 1,
+      "price": 0
+    },
+    {
+      "title": "نرگس",
+      "qty": 1,
+      "price": 0
+    }
+  ],
+  "quantity": 1,
+  "total": 0,
+  "deposit": 0,
+  "remaining": 0,
+  "status": {
+    "registered": true,
+    "inProgress": false,
+    "ready": false,
+    "delivered": false,
+    "paid": false,
+    "depositReceived": false,
+    "settled": false
+  },
+  "createdAt": 1794322096667,
+  "updatedAt": 1794322096667,
+  "telegram": {
+    "messageId": 0,
+    "photoMessageId": 0,
+    "imageHash": ""
+  },
+  "attachments": []
+}
