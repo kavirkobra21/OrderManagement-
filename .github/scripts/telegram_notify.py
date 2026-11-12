@@ -305,10 +305,18 @@ class Telegram:
         self.stats["sent"] += 1
         return mid
 
-    def edit_photo(self, mid, path):
-        media = json.dumps({"type": "photo", "media": "attach://photo"})
-        self.call("editMessageMedia", {"message_id": mid, "media": media}, "photo", path)
+    def edit_photo(self, mid, path, caption=""):
+        # the caption has to travel with the new media, otherwise Telegram drops it
+        media = {"type": "photo", "media": "attach://photo"}
+        if caption:
+            media["caption"] = caption[:CAPTION_MAX]
+        self.call("editMessageMedia", {"message_id": mid, "media": json.dumps(media)}, "photo", path)
         self.stats["edited"] += 1
+
+    def edit_caption(self, mid, caption):
+        """editMessageCaption on a photo/document message. True = caption changed, False = identical ("not modified").
+        Raises TelegramError(not_found=True) when the message is gone."""
+        return self.call("editMessageCaption", {"message_id": mid, "caption": (caption or "")[:CAPTION_MAX]}) is not None
 
 
 # ------------------------------------------------------------------ state + orders
@@ -369,6 +377,7 @@ def adopt_legacy(order, folder, existing):
             "imageSha": tg.get("imageHash", ""), "sentFiles": sent}
 
 
+CAPTION_MAX = 1000   # Telegram allows 1024 characters in a caption
 ERRORS = []
 # order numbers (#n) touched by this run, for the report: first sent / edited in place / sent again because missing in Telegram
 SENT, EDITED, RESENT = [], [], []
@@ -446,18 +455,21 @@ def process_order(tg, folder, fa, no, template="", resend=False, chat=""):
         img = os.path.join(folder, "order_image.png")
         if os.path.isfile(img):
             sha = sha256_file(img)
-            cap = (f"فاکتور {order.get('invoiceNo', '')} — سفارش #{order.get('syncNo', no)}" if fa
-                   else f"Invoice {to_latin(order.get('invoiceNo', ''))} — order #{order.get('syncNo', no)}")
+            # the caption of the picture carries the CURRENT order text, so status / customer / items / price changes
+            # show up on the picture too (editMessageCaption); the text message itself is edited with editMessageText
+            cap = text if len(text) <= CAPTION_MAX else text[:CAPTION_MAX - 1] + "…"
             pmissing = False
             if state.get("photoMessageId"):
                 try:
                     if state.get("imageSha") != sha:
-                        tg.edit_photo(state["photoMessageId"], img)
+                        tg.edit_photo(state["photoMessageId"], img, cap)
                         state["imageSha"] = sha
                         _note(EDITED, no)
-                        print(f"order {no}: image edited")
-                    else:
-                        tg.probe_caption(state["photoMessageId"], cap)
+                        print(f"order {no}: image + caption edited")
+                    elif tg.edit_caption(state["photoMessageId"], cap):
+                        tg.stats["edited"] += 1
+                        _note(EDITED, no)
+                        print(f"order {no}: image caption edited")
                 except TelegramError as e:
                     if not e.not_found:
                         raise

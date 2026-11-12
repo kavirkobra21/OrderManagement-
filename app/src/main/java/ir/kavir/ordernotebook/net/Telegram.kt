@@ -74,7 +74,7 @@ class Telegram(private val token: String, private val chatId: String) {
     /** Invisible existence check of a photo/document message: re-applies its own caption. notFound = it was deleted. */
     @Throws(IOException::class)
     fun probeCaption(messageId: Long, caption: String = ""): Result =
-        call("editMessageCaption", JSONObject().put("chat_id", chatId).put("message_id", messageId).put("caption", caption))
+        call("editMessageCaption", JSONObject().put("chat_id", chatId).put("message_id", messageId).put("caption", caption.take(1000)))
 
     @Throws(IOException::class)
     fun sendPhoto(file: File, caption: String? = null): Result {
@@ -85,8 +85,10 @@ class Telegram(private val token: String, private val chatId: String) {
     }
 
     @Throws(IOException::class)
-    fun editPhoto(messageId: Long, file: File): Result {
-        val media = JSONObject().put("type", "photo").put("media", "attach://photo").toString()
+    fun editPhoto(messageId: Long, file: File, caption: String = ""): Result {
+        // the caption travels with the new media, otherwise Telegram drops it
+        val media = JSONObject().put("type", "photo").put("media", "attach://photo")
+            .apply { if (caption.isNotBlank()) put("caption", caption.take(1000)) }.toString()
         return multipart(
             "editMessageMedia",
             mapOf("chat_id" to chatId, "message_id" to messageId.toString(), "media" to media),

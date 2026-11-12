@@ -187,6 +187,31 @@ class Delivery(Base):
         self.assertIn(str(mid).encode(), REQUESTS[0][1])
         self.assertIn("150,000".encode(), REQUESTS[0][1])
 
+    def test_changed_order_updates_photo_caption_too(self):
+        """the picture's caption carries the current order text (editMessageCaption), the text message is edited too"""
+        self.run_main()
+        st = self.state()
+        CONTENT[st["photoMessageId"]] = "old caption"          # what the picture shows in the chat
+        REQUESTS.clear(); CHANGES.clear()
+        self.write_order(order(total=150000))
+        self.assertEqual(self.run_main(), 0)
+        self.assertEqual(changes(), ["editMessageText", "editMessageCaption"])
+        cap = [b for m, b in REQUESTS if m == "editMessageCaption"][0]
+        self.assertIn(str(st["photoMessageId"]).encode(), cap)
+        self.assertIn("150,000".encode(), cap)
+        REQUESTS.clear(); CHANGES.clear()
+        self.assertEqual(self.run_main(), 0)                  # unchanged: nothing is touched again
+        self.assertEqual(changes(), [])
+
+    def test_new_image_keeps_the_caption(self):
+        self.run_main()
+        REQUESTS.clear(); CHANGES.clear()
+        self.write_bytes("order_image.png", b"PNG-v3")
+        self.write_order(order(total=777000))
+        self.assertEqual(self.run_main(), 0)
+        media = [b for m, b in REQUESTS if m == "editMessageMedia"][0]
+        self.assertIn("777,000".encode(), media)              # caption travels inside the InputMedia
+
     def test_changed_image_edits_photo(self):
         self.run_main()
         REQUESTS.clear(); CHANGES.clear()

@@ -121,7 +121,7 @@ class TelegramSync(private val repo: Repo) {
                     } else throw TgFail("ویرایش $label: ${r.message}")
                 }
                 val cur = dao.order(o.id) ?: o
-                val ph = syncPhoto(tg, cur, c)
+                val ph = syncPhoto(tg, cur, c, text)
                 sent += ph[0]; edited += ph[1]; resent += ph[2]
                 if (ph[1] > 0 && no !in editedIds) editedIds += no
                 if (ph[2] > 0 && no !in resentIds) resentIds += no
@@ -142,23 +142,26 @@ class TelegramSync(private val repo: Repo) {
 
     /** the notebook-page image: sent once, edited when the content changed, sent again when it vanished from the chat.
      *  Returns [sent, edited, resent]. */
-    private suspend fun syncPhoto(tg: Telegram, o: Order, c: ir.kavir.ordernotebook.data.Customer?): IntArray {
+    private suspend fun syncPhoto(tg: Telegram, o: Order, c: ir.kavir.ordernotebook.data.Customer?, text: String): IntArray {
+        val caption = if (text.length <= 1000) text else text.take(999) + "…"
         val png = repo.sync.renderPng(o, c)
         val h = GitHubApi.sha256(png)
         if (o.tgPhotoMessageId != 0L && o.tgImageHash == h) {
-            val p = tg.probeCaption(o.tgPhotoMessageId)
-            if (p.ok) return intArrayOf(0, 0, 0)
+            // same picture: re-apply the CURRENT order text as its caption (editMessageCaption). Unchanged -> "not modified";
+            // changed -> caption updated; deleted -> "not found" -> picture sent again
+            val p = tg.probeCaption(o.tgPhotoMessageId, caption)
+            if (p.ok) return if (p.message == Telegram.NOT_MODIFIED) intArrayOf(0, 0, 0) else intArrayOf(0, 1, 0)
             if (!p.notFound) throw TgFail("بررسی عکس سفارش: ${p.message}")
         }
         val f = File.createTempFile("order_${o.id}_", ".png", repo.ctx.cacheDir)
         try {
             f.writeBytes(png)
             if (o.tgPhotoMessageId != 0L && o.tgImageHash != h) {
-                val r = tg.editPhoto(o.tgPhotoMessageId, f)
+                val r = tg.editPhoto(o.tgPhotoMessageId, f, caption)
                 if (r.ok) { dao.setTgPhoto(o.id, o.tgPhotoMessageId, h); return intArrayOf(0, 1, 0) }
                 if (!r.notFound) throw TgFail("ویرایش عکس سفارش: ${r.message}")
             }
-            val n = tg.sendPhoto(f, null)
+            val n = tg.sendPhoto(f, caption)
             if (!n.ok) throw TgFail("عکس سفارش: ${n.message}")
             dao.setTgPhoto(o.id, n.messageId, h)
             return if (o.tgPhotoMessageId == 0L) intArrayOf(1, 0, 0) else intArrayOf(0, 0, 1)
