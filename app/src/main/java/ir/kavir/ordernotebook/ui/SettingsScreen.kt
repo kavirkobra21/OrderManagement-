@@ -40,6 +40,10 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
     var showTg by remember { mutableStateOf(false) }
     var showForm by remember { mutableStateOf(false) }
     var showTpl by remember { mutableStateOf(false) }
+    var tgMethod by remember { mutableStateOf(prefs.telegramMethod) }
+    var tgSyncing by remember { mutableStateOf(false) }
+    var tgProgress by remember { mutableStateOf("") }
+    var tgResult by remember { mutableStateOf(prefs.tgSyncSummary) }
 
     // ---- GitHub connection (entered once, stored encrypted)
     var ghEditing by remember { mutableStateOf(!prefs.ghConfigured) }
@@ -82,10 +86,39 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 32.dp)) {
 
             // ============================================================ Telegram (sent by GitHub Actions)
-            Section("تلگرام (ارسال با GitHub Actions)") {
+            Section("تلگرام") {
+                Button(
+                    enabled = !tgSyncing,
+                    onClick = {
+                        tgSyncing = true; tgProgress = "شروع همگام‌سازی…"; tgResult = ""
+                        scope.launch {
+                            val s = ir.kavir.ordernotebook.net.TelegramSync(repo).run { tgProgress = it }
+                            tgResult = s.text(); tgProgress = ""; tgSyncing = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(26.dp),
+                ) { Text("Sync to Telegram") }
+                if (tgSyncing) { LinearProgressIndicator(Modifier.fillMaxWidth()); if (tgProgress.isNotBlank()) Text(tgProgress, style = MaterialTheme.typography.bodySmall) }
+                if (tgResult.isNotBlank()) Text(tgResult, style = MaterialTheme.typography.bodySmall)
                 Text(
-                    "متن سفارش و همه‌ی عکس‌ها فقط توسط GitHub Actions به تلگرام ارسال می‌شوند. Bot Token و Chat ID را یک‌بار اینجا وارد کنید؛ " +
-                        "برنامه آن‌ها را رمزنگاری و در Secrets مخزن سفارش‌های شما ثبت می‌کند و روی گوشی نگه نمی‌دارد.",
+                    "هیچ سفارشی (ساخت، ویرایش یا حذف) به‌تنهایی چیزی به تلگرام نمی‌فرستد. فقط با زدن این دکمه: سفارش‌های جدید ارسال، " +
+                        "سفارش‌های ویرایش‌شده در همان پیام قبلی ویرایش و سفارش‌های حذف‌شده از تلگرام پاک می‌شوند؛ موارد تکراری ارسال نمی‌شوند.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text("روش ارسال")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(tgMethod == ir.kavir.ordernotebook.data.Prefs.METHOD_DEVICE, { tgMethod = ir.kavir.ordernotebook.data.Prefs.METHOD_DEVICE; prefs.telegramMethod = tgMethod }, enabled = !tgSyncing)
+                    Text("My Device (مستقیم از گوشی)")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(tgMethod == ir.kavir.ordernotebook.data.Prefs.METHOD_ACTIONS, { tgMethod = ir.kavir.ordernotebook.data.Prefs.METHOD_ACTIONS; prefs.telegramMethod = tgMethod }, enabled = !tgSyncing)
+                    Text("GitHub Actions")
+                }
+                Text(
+                    if (tgMethod == ir.kavir.ordernotebook.data.Prefs.METHOD_DEVICE)
+                        "پیام‌ها مستقیم از همین گوشی ارسال می‌شوند. Bot Token و Chat ID رمزنگاری‌شده فقط روی گوشی می‌مانند (در GitHub ذخیره نمی‌شوند)."
+                    else
+                        "پیام‌ها توسط GitHub Actions ارسال می‌شوند. Bot Token و Chat ID را یک‌بار وارد کنید؛ برنامه آن‌ها را رمزنگاری و در Secrets مخزن ثبت می‌کند و روی گوشی نگه نمی‌دارد.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Button(onClick = { showTg = true }, Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) { Text("Telegram Settings") }
@@ -114,8 +147,8 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                         }
                     }) { Text("ساخت / به‌روزرسانی Workflow تلگرام") }
                     Text(
-                        "این دکمه در همین مخزن سفارش‌ها (که بالا نوشته شده) فایل‌های Workflow و اسکریپت تلگرام را آپلود می‌کند تا با ثبت هر سفارش، " +
-                            "GitHub Actions متن و عکس‌ها را به تلگرام بفرستد. مخزن به‌روزرسانی برنامه جداست و تغییری نمی‌کند. " +
+                        "این دکمه در همین مخزن سفارش‌ها (که بالا نوشته شده) فایل‌های Workflow و اسکریپت تلگرام را آپلود می‌کند تا " +
+                            "GitHub Actions متن و عکس‌ها را فقط با دکمه‌ی «Sync to Telegram» به تلگرام بفرستد. مخزن به‌روزرسانی برنامه جداست و تغییری نمی‌کند. " +
                             "توکن باید Contents و Workflows (Read and write) داشته باشد. بعد از آن Bot Token و Chat ID را در Telegram Settings ثبت کنید.",
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -229,7 +262,6 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
     // ---------------------------------------------------------------- Telegram Settings dialog
     if (showTg) {
         var dLang by remember { mutableStateOf(prefs.telegramLang) }
-        var dOn by remember { mutableStateOf(prefs.autoSend) }
         var botToken by remember { mutableStateOf("") }
         var chatId by remember { mutableStateOf("") }
         var steps by remember { mutableStateOf<List<ir.kavir.ordernotebook.net.RepoSetup.Step>>(emptyList()) }
@@ -254,12 +286,29 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                         Spacer(Modifier.width(16.dp))
                         RadioButton(dLang == "en", { dLang = "en" }); Text("English")
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(dOn, { dOn = it }); Spacer(Modifier.width(8.dp)); Text("ارسال خودکار سفارش‌ها")
-                    }
-                    Button(enabled = !working && prefs.ghConfigured && botToken.isNotBlank() && chatId.isNotBlank(), onClick = {
-                        working = true; status = "در حال اتصال به GitHub…"; steps = emptyList()
-                        prefs.telegramLang = dLang; prefs.autoSend = dOn
+                    val device = prefs.telegramMethod == ir.kavir.ordernotebook.data.Prefs.METHOD_DEVICE
+                    Text(
+                        if (device) "روش فعلی: My Device" + (if (prefs.botToken.isNotBlank()) " — ✓ Bot Token و Chat ID روی گوشی ذخیره شده‌اند" else "")
+                        else "روش فعلی: GitHub Actions",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Button(enabled = !working && (device || prefs.ghConfigured) && botToken.isNotBlank() && chatId.isNotBlank(), onClick = {
+                        working = true; steps = emptyList()
+                        prefs.telegramLang = dLang
+                        if (device) {
+                            val bad = ir.kavir.ordernotebook.net.RepoSetup.validateInput(botToken, chatId)
+                            if (bad != null) { status = "✗ $bad"; working = false; return@Button }
+                            prefs.botToken = botToken; prefs.chatId = chatId
+                            status = "ذخیره شد؛ در حال بررسی اتصال به تلگرام…"
+                            scope.launch {
+                                val r = withContext(Dispatchers.IO) { ir.kavir.ordernotebook.net.Telegram.from(prefs).checkConnection() }
+                                status = (if (r.ok) "✓ " else "✗ ") + r.message
+                                if (r.ok) { botToken = ""; chatId = "" }
+                                working = false
+                            }
+                            return@Button
+                        }
+                        status = "در حال اتصال به GitHub…"
                         scope.launch {
                             val res = ir.kavir.ordernotebook.net.RepoSetup(ctx, prefs).run(botToken, chatId)
                             steps = res
@@ -269,8 +318,22 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                             working = false
                         }
                     }, modifier = Modifier.fillMaxWidth()) { Text("ذخیره و اتصال") }
-                    OutlinedButton(enabled = !working && prefs.ghConfigured, onClick = {
+                    OutlinedButton(enabled = !working && (device || prefs.ghConfigured), onClick = {
                         working = true; status = "در حال ارسال درخواست…"
+                        if (device) {
+                            scope.launch {
+                                status = withContext(Dispatchers.IO) {
+                                    val t = ir.kavir.ordernotebook.net.Telegram.from(prefs)
+                                    val c = t.checkConnection()
+                                    if (!c.ok) "✗ ${c.message}" else try {
+                                        val m = t.sendText("✅ پیام آزمایشی دفترچه سفارش")
+                                        if (m.ok) "✓ پیام آزمایشی ارسال شد" else "✗ ${m.message}"
+                                    } catch (e: IOException) { "✗ خطای اتصال: ${e.message}" }
+                                }
+                                working = false
+                            }
+                            return@OutlinedButton
+                        }
                         scope.launch {
                             status = withContext(Dispatchers.IO) {
                                 try {
@@ -283,7 +346,7 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                             working = false
                         }
                     }, modifier = Modifier.fillMaxWidth()) { Text("Test Connection") }
-                    OutlinedButton(enabled = !working && prefs.ghConfigured, onClick = {
+                    if (!device) OutlinedButton(enabled = !working && prefs.ghConfigured, onClick = {
                         working = true; status = "در حال خواندن وضعیت…"
                         scope.launch {
                             status = withContext(Dispatchers.IO) {
@@ -301,14 +364,14 @@ fun SettingsScreen(repo: Repo, nav: Nav, snack: SnackbarHostState) {
                             working = false
                         }
                     }, modifier = Modifier.fillMaxWidth()) { Text("وضعیت آخرین اجرای Action") }
-                    if (!prefs.ghConfigured) Text("ابتدا اتصال GitHub را تنظیم کنید.", style = MaterialTheme.typography.bodySmall)
+                    if (!device && !prefs.ghConfigured) Text("ابتدا اتصال GitHub را تنظیم کنید.", style = MaterialTheme.typography.bodySmall)
                     steps.forEach { Text((if (it.ok) "✓ " else "✗ ") + it.title + (if (it.detail.isNotBlank()) " — ${it.detail}" else ""), style = MaterialTheme.typography.bodySmall) }
                     if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {
                 TextButton(enabled = !working, onClick = {
-                    prefs.telegramLang = dLang; prefs.autoSend = dOn
+                    prefs.telegramLang = dLang
                     showTg = false
                     scope.launch { repo.enqueueConfig(); snack.showSnackbar("تنظیمات تلگرام ذخیره شد") }
                 }) { Text("Save Settings") }

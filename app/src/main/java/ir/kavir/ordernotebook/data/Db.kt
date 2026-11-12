@@ -75,6 +75,9 @@ interface AppDao {
     @Query("UPDATE orders SET syncNo = :n WHERE id = :id") suspend fun setSyncNo(id: Long, n: Long)
     @Query("UPDATE orders SET tgMessageId = :m WHERE id = :id") suspend fun setTgMessage(id: Long, m: Long)
     @Query("UPDATE orders SET tgPhotoMessageId = :m, tgImageHash = :h WHERE id = :id") suspend fun setTgPhoto(id: Long, m: Long, h: String)
+    @Query("UPDATE orders SET tgMessageId = :m, tgTextHash = :h WHERE id = :id") suspend fun setTgText(id: Long, m: Long, h: String)
+    @Query("UPDATE orders SET tgPhotoMessageId = 0, tgImageHash = '' WHERE id = :id") suspend fun clearTgPhoto(id: Long)
+    @Query("UPDATE attachments SET tgSent = 0 WHERE orderId = :oid") suspend fun resetTgSent(oid: Long)
     @Query("UPDATE orders SET ghImageHash = :h WHERE id = :id") suspend fun setGhImageHash(id: Long, h: String)
     @Query("UPDATE attachments SET remotePath = :p WHERE id = :id") suspend fun setRemotePath(id: Long, p: String)
     @Query("UPDATE attachments SET tgSent = 1 WHERE id = :id") suspend fun setTgSent(id: Long)
@@ -100,14 +103,14 @@ interface AppDao {
     @Query("DELETE FROM customers") suspend fun wipeCustomers()
 }
 
-@Database(entities = [Customer::class, Order::class, Attachment::class, PendingOp::class], version = 3, exportSchema = false)
+@Database(entities = [Customer::class, Order::class, Attachment::class, PendingOp::class], version = 4, exportSchema = false)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): AppDao
 
     companion object {
         @Volatile private var inst: AppDb? = null
         fun get(ctx: Context): AppDb = inst ?: synchronized(this) {
-            inst ?: Room.databaseBuilder(ctx.applicationContext, AppDb::class.java, "ordernotebook.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { inst = it }
+            inst ?: Room.databaseBuilder(ctx.applicationContext, AppDb::class.java, "ordernotebook.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { inst = it }
         }
     }
 }
@@ -149,5 +152,14 @@ val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
         db.execSQL("ALTER TABLE customers ADD COLUMN contactId TEXT NOT NULL DEFAULT ''")
         db.execSQL("ALTER TABLE customers ADD COLUMN postalCode TEXT NOT NULL DEFAULT ''")
         db.execSQL("ALTER TABLE orders ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1")
+    }
+}
+
+/** v3 -> v4: order discounts and the Telegram text hash used by manual sync. Existing orders keep total as is (no discount). */
+val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+    override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE orders ADD COLUMN discountPercent REAL NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE orders ADD COLUMN discountFixed INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE orders ADD COLUMN tgTextHash TEXT NOT NULL DEFAULT ''")
     }
 }

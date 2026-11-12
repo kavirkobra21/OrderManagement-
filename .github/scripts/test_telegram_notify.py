@@ -206,12 +206,46 @@ class Delivery(Base):
         self.assertIn(b"55", REQUESTS[0][1])
 
 
+class Deletion(Base):
+    def test_trashed_customer_deletes_messages_and_sends_nothing(self):
+        with open(os.path.join(self.folder, "customer.json"), "w", encoding="utf-8") as f:
+            json.dump({"name": "x", "deletedAt": 123}, f)
+        with open(os.path.join(self.folder, "telegram.json"), "w", encoding="utf-8") as f:
+            json.dump({"messageId": 55, "photoMessageId": 56, "textHash": "h"}, f)
+        self.assertEqual(self.run_main(), 0)
+        self.assertEqual(methods(), ["deleteMessage", "deleteMessage"])
+        st = self.state()
+        self.assertEqual((st["messageId"], st["photoMessageId"]), (0, 0))
+        REQUESTS.clear()
+        self.assertEqual(self.run_main(), 0)          # second run: nothing left to delete, nothing sent
+        self.assertEqual(methods(), [])
+
+    def test_restored_order_is_sent_again_as_new(self):
+        with open(os.path.join(self.folder, "telegram.json"), "w", encoding="utf-8") as f:
+            json.dump({"messageId": 0, "deleted": True}, f)
+        self.assertEqual(self.run_main(), 0)
+        self.assertIn("sendMessage", methods())
+        self.assertNotIn("deleted", self.state())
+
+    def test_tombstones_delete_messages_of_permanently_removed_orders(self):
+        os.makedirs(os.path.join(self.tmp, "data"))
+        json.dump({"messages": [901, 902]}, open(os.path.join(self.tmp, "data", "telegram_deleted.json"), "w"))
+        SCRIPT["deleteMessage"] = [(400, {"ok": False, "error_code": 400, "description": "Bad Request: message to delete not found"})]
+        self.assertEqual(self.run_main(), 0)          # already-gone message counts as done
+        self.assertEqual(methods().count("deleteMessage"), 2)
+
+    def test_summary_file_counts(self):
+        self.assertEqual(self.run_main(), 0)
+        st = json.load(open(os.path.join(self.tmp, "data", "telegram_status.json")))
+        self.assertEqual((st["sent"] >= 1, st["failed"], st["errors"]), (True, 0, []))
+
+
 class Config(Base):
-    def test_disabled_in_config(self):
+    def test_enabled_flag_is_ignored_manual_sync_always_runs(self):
         cfg = os.path.join(self.tmp, "notify.json")
         json.dump({"enabled": False}, open(cfg, "w"))
         self.assertEqual(tn.main(["--orders", self.root, "--config", cfg]), 0)
-        self.assertEqual(methods(), [])
+        self.assertIn("sendMessage", methods())
 
     def test_missing_secrets_fails_clearly_only_when_there_is_work(self):
         saved = os.environ.pop("TELEGRAM_BOT_TOKEN")
@@ -294,3 +328,17 @@ class TemplateAndResend(unittest.TestCase):
         msg = tn.render_template("{name} | {id} | {phone} | {postal_code} | {address} | #{order_id}", o,
                                  {"name": "محمدرضا", "contactId": "@Mmd", "phone": "0996", "postalCode": "89", "address": "یزد"}, True)
         self.assertEqual(msg, "محمدرضا | @Mmd | 0996 | 89 | یزد | #5")
+
+    def test_discount_lines_and_remaining_use_final_price(self):
+        o = order(syncNo=5, total=100000, discountPercent=10.0, discountFixed=5000, discount=15000, finalTotal=85000, deposit=20000, status={})
+        msg = tn.build_message(o, {"name": "A"}, True)
+        self.assertIn("(هزینه کل): 100,000 تومان", msg)
+        self.assertIn("(تخفیف): 10% + 5,000 تومان = 15,000 تومان", msg)
+        self.assertIn("(مبلغ نهایی): 85,000 تومان", msg)
+        self.assertIn("(باقیمانده): 65,000 تومان", msg)
+        v = tn.template_values(o, {"name": "A"}, True)
+        self.assertEqual(v["final_price"], "85,000 تومان"); self.assertEqual(v["original_price"], "100,000 تومان")
+
+    def test_no_discount_message_has_no_discount_lines(self):
+        msg = tn.build_message(order(syncNo=5), {"name": "A"}, True)
+        self.assertNotIn("تخفیف", msg); self.assertNotIn("مبلغ نهایی", msg)

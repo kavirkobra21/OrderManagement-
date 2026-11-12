@@ -4,14 +4,8 @@ name: Telegram Orders
 # Needs two repository secrets:  TELEGRAM_BOT_TOKEN  and  TELEGRAM_CHAT_ID  (the app creates them for you)
 # (Settings -> Secrets and variables -> Actions -> New repository secret)
 
+# Runs ONLY when you press "Sync to Telegram" (or Test / Resend) in the app - never on commits or on a schedule.
 on:
-  push:
-    branches: [main, master]
-    paths:
-      - "Order/orders/**"
-      - "config/notify.json"
-  schedule:
-    - cron: "17 * * * *" # hourly retry of anything that failed earlier (no-op when everything is delivered)
   workflow_dispatch:
     inputs:
       test:

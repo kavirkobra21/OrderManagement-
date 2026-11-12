@@ -43,6 +43,9 @@ data class Order(
     /** number of units ordered (structured data, not text in the description) */
     val quantity: Int = 1,
     val total: Long = 0,
+    /** percentage discount (0..100) applied first, then [discountFixed]; [total] stays the ORIGINAL price */
+    val discountPercent: Double = 0.0,
+    val discountFixed: Long = 0,
     val deposit: Long = 0,
     val stRegistered: Boolean = true,
     val stInProgress: Boolean = false,
@@ -61,8 +64,12 @@ data class Order(
     val tgPhotoMessageId: Long = 0,
     val tgImageHash: String = "",
     val ghImageHash: String = "",
+    /** hash of the text last sent/edited in Telegram by the manual sync (device method) */
+    val tgTextHash: String = "",
 ) {
-    val remaining: Long get() = if (settled || paid) 0 else (total - deposit).coerceAtLeast(0)
+    val pricing: ir.kavir.ordernotebook.util.Pricing.Result get() = ir.kavir.ordernotebook.util.Pricing.calc(total, discountPercent, discountFixed)
+    val finalTotal: Long get() = pricing.final
+    val remaining: Long get() = if (settled || paid) 0 else (finalTotal - deposit).coerceAtLeast(0)
 
     val isCompleted: Boolean get() = stDelivered && (settled || paid)
 }

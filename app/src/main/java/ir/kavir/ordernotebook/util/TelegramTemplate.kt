@@ -10,13 +10,13 @@ object TelegramTemplate {
         "total_price" to "هزینه کل", "status" to "وضعیت سفارش و پرداخت", "created_at" to "تاریخ ثبت",
         "description" to "توضیحات", "notes" to "نکات سفارش", "quantity" to "تعداد", "phone" to "شماره تماس",
         "address" to "آدرس", "customer_id" to "آیدی مشتری", "postal_code" to "کد پستی", "invoice" to "شماره فاکتور",
-        "delivery" to "زمان تحویل", "items_total" to "جمع آیتم‌ها", "deposit" to "بیعانه", "remaining" to "باقیمانده",
+        "delivery" to "زمان تحویل", "items_total" to "جمع آیتم‌ها", "original_price" to "قیمت اصلی", "discount" to "مبلغ کل تخفیف", "discount_percent" to "تخفیف درصدی", "discount_fixed" to "تخفیف مبلغی", "final_price" to "قیمت نهایی", "deposit" to "بیعانه", "remaining" to "باقیمانده",
     )
 
     /** Starting point shown in the editor; it mirrors the built-in format. */
     const val DEFAULT_TEXT = "سفارش ثبت شد:\n\n(شناسه سفارش): #{order_id}\n(نام مشتری): {customer_name}\n(شماره تماس): {phone}\n" +
         "(شماره فاکتور): {invoice}\n(تاریخ): {created_at}\n(زمان تحویل): {delivery}\n(آدرس): {address}\n\n(سفارش‌ها):\n{items}\n\n" +
-        "(توضیحات): {description}\n(نکات سفارش): {notes}\n\n(جمع آیتم‌ها): {items_total}\n(هزینه کل): {total_price}\n" +
+        "(توضیحات): {description}\n(نکات سفارش): {notes}\n\n(جمع آیتم‌ها): {items_total}\n(هزینه کل): {original_price}\n(تخفیف): {discount}\n(مبلغ نهایی): {final_price}\n" +
         "(بیعانه): {deposit}\n(باقیمانده): {remaining}\n\n(وضعیت): {status}"
 
     fun sample(): Map<String, String> = mapOf(
@@ -24,7 +24,7 @@ object TelegramTemplate {
         "total_price" to "330,000 تومان", "status" to "ثبت شده / پرداخت نشده", "created_at" to Fmt.todayJalali(),
         "description" to "تحویل صبح", "notes" to "", "quantity" to "7", "phone" to "09121234567", "address" to "تهران",
         "customer_id" to "@ali_r", "postal_code" to "1234567890", "invoice" to "12", "delivery" to "", "items_total" to "330,000 تومان",
-        "deposit" to "100,000 تومان", "remaining" to "230,000 تومان",
+        "original_price" to "350,000 تومان", "discount" to "20,000 تومان", "discount_percent" to "5", "discount_fixed" to "2,500 تومان", "final_price" to "330,000 تومان", "deposit" to "100,000 تومان", "remaining" to "230,000 تومان",
     )
 
     private val re = Regex("\\{([a-z_]+)\\}")

@@ -74,6 +74,7 @@ class Repo private constructor(val ctx: Context) {
     /** Permanent delete: local rows + image files now, the GitHub folders (Order/orders/<n>) through the sync queue. */
     suspend fun purgeCustomer(id: Long) {
         val folders = dao.ordersOfNow(id).map { it.syncNo }.filter { it > 0 }
+        prefs.addTombstones(dao.ordersOfNow(id).flatMap { listOf(it.tgMessageId, it.tgPhotoMessageId) })
         dao.attachmentsOfCustomerNow(id).forEach { fileOf(it).delete() }
         dao.deleteCustomer(id) // orders + attachments rows cascade
         if (prefs.ghConfigured) folders.forEach { dao.putOp(PendingOp(kind = OpKind.GH_DELETE, orderId = it)) }
@@ -97,7 +98,7 @@ class Repo private constructor(val ctx: Context) {
             val o = if (cur == null) o0.copy(updatedAt = now) else o0.copy(
                 uid = cur.uid, syncNo = cur.syncNo, createdAt = cur.createdAt,
                 tgMessageId = cur.tgMessageId, tgPhotoMessageId = cur.tgPhotoMessageId,
-                tgImageHash = cur.tgImageHash, ghImageHash = cur.ghImageHash, updatedAt = now,
+                tgImageHash = cur.tgImageHash, ghImageHash = cur.ghImageHash, tgTextHash = cur.tgTextHash, updatedAt = now,
             )
             dao.updateOrder(o)
             id = o0.id

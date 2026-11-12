@@ -50,6 +50,8 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
     var qtyS by remember { mutableStateOf("1") }
     var totalS by remember { mutableStateOf("") }
     var depositS by remember { mutableStateOf("") }
+    var pctS by remember { mutableStateOf("") }
+    var fixS by remember { mutableStateOf("") }
     var pendingType by remember { mutableStateOf(AttachmentType.RECEIPT) }
     var busy by remember { mutableStateOf(false) }
 
@@ -60,6 +62,8 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                 order = it; items = OrderItem.decode(it.itemsText).map { x -> ItemRow.of(x) }; qtyS = it.quantity.toString()
                 totalS = if (it.total > 0) it.total.toString() else ""
                 depositS = if (it.deposit > 0) it.deposit.toString() else ""
+                pctS = ir.kavir.ordernotebook.util.Pricing.percentText(it.discountPercent)
+                fixS = if (it.discountFixed > 0) it.discountFixed.toString() else ""
             }
         } else {
             order = order.copy(invoiceNo = Fmt.toPersianDigits((repo.prefs.invoiceCounter + 1).toString()))
@@ -79,7 +83,7 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
     }
 
     // The order as currently typed (not yet saved)
-    val live = order.copy(total = Fmt.parseMoney(totalS), deposit = Fmt.parseMoney(depositS), itemsText = OrderItem.encode(items.map { it.toItem() }), quantity = qtyS.toIntOrNull()?.coerceAtLeast(1) ?: order.quantity)
+    val live = order.copy(total = Fmt.parseMoney(totalS), discountPercent = ir.kavir.ordernotebook.util.Pricing.parsePercent(pctS), discountFixed = Fmt.parseMoney(fixS), deposit = Fmt.parseMoney(depositS), itemsText = OrderItem.encode(items.map { it.toItem() }), quantity = qtyS.toIntOrNull()?.coerceAtLeast(1) ?: order.quantity)
     val data = pageData(live, customer)
 
     // total follows the sum of the item prices whenever an item/price/qty changes (stored as a real number)
@@ -168,7 +172,22 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
             }
 
             Section("پرداخت‌ها") {
-                MoneyField("هزینه کل", totalS, { totalS = it })
+                MoneyField("قیمت اصلی (هزینه کل)", totalS, { totalS = it })
+                Field("تخفیف درصدی", pctS, { v ->
+                    // digits and one decimal separator only; never above 100%
+                    val t = Fmt.toLatinDigits(v).replace('٫', '.').replace(',', '.').filter { ch -> ch.isDigit() || ch == '.' }
+                    pctS = if (t.isNotEmpty() && (t.toDoubleOrNull() ?: 0.0) > 100.0) "100" else t
+                }, suffix = "%", keyboard = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                MoneyField("تخفیف مبلغی", fixS, { fixS = it })
+                val pr = live.pricing
+                if (pr.discount > 0 || pctS.isNotBlank() || fixS.isNotBlank()) {
+                    Text("قیمت اصلی: ${Fmt.toman(pr.original)}")
+                    if (pr.percentAmount > 0) Text("تخفیف درصدی: -${Fmt.toman(pr.percentAmount)}")
+                    if (pr.fixedAmount > 0) Text("تخفیف مبلغی: -${Fmt.toman(pr.fixedAmount)}")
+                    if (Fmt.parseMoney(fixS) > pr.fixedAmount) Text("تخفیف مبلغی از قیمت باقی‌مانده بیشتر بود و محدود شد", style = MaterialTheme.typography.bodySmall)
+                    Text("مجموع تخفیف: ${Fmt.toman(pr.discount)}")
+                }
+                Text("قیمت نهایی: ${Fmt.toman(pr.final)}", style = MaterialTheme.typography.titleMedium)
                 MoneyField("بیعانه", depositS, { depositS = it })
                 Text("باقی‌مانده: ${Fmt.toman(live.remaining)}", style = MaterialTheme.typography.titleMedium)
             }
@@ -226,7 +245,7 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                         "postal_code" to cust?.postalCode.orEmpty(), "address" to cust?.address.orEmpty(),
                         "quantity" to qtyS, "order_id" to order.invoiceNo,
                         "items" to list.joinToString("\n") { "- ${it.title} — ${Fmt.toman(it.price * it.q)}" },
-                        "total" to Fmt.toman(Fmt.parseMoney(totalS)),
+                        "total" to Fmt.toman(live.finalTotal),
                     )
                     clip.setText(androidx.compose.ui.text.AnnotatedString(ir.kavir.ordernotebook.util.FormTemplate.render(repo.prefs.formTemplate, vals)))
                     scope.launch { snack.showSnackbar("متن سفارش کپی شد") }
@@ -273,7 +292,7 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                 var sending by remember { mutableStateOf(false) }
                 var tgStatus by remember { mutableStateOf("") }
                 Text(
-                    "ویرایش سفارش، همان پیام قبلی تلگرام را ویرایش می‌کند. این دکمه عمداً یک پیام جدید می‌فرستد (توسط GitHub Actions).",
+                    "ویرایش سفارش، همان پیام قبلی تلگرام را ویرایش می‌کند. این دکمه عمداً یک پیام جدید می‌فرستد (با روش انتخاب‌شده در تنظیمات). ذخیره‌ی سفارش هرگز خودکار چیزی به تلگرام نمی‌فرستد.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Button(
@@ -284,6 +303,10 @@ fun OrderScreen(repo: Repo, nav: Nav, customerId: Long, orderId: Long?, snack: S
                         scope.launch {
                             try {
                                 val saved = save() ?: return@launch
+                                if (repo.prefs.telegramMethod == ir.kavir.ordernotebook.data.Prefs.METHOD_DEVICE) {
+                                    tgStatus = ir.kavir.ordernotebook.net.TelegramSync(repo).resendViaDevice(saved.id)
+                                    return@launch
+                                }
                                 if (!repo.prefs.ghConfigured) { tgStatus = "✗ ابتدا اتصال GitHub را در تنظیمات انجام دهید"; return@launch }
                                 repo.sync.process()
                                 val cur = repo.dao.order(saved.id)

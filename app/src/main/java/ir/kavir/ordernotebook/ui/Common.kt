@@ -188,7 +188,7 @@ fun pageData(o: Order, c: Customer?): PageData {
         date = o.dateText, invoice = o.invoiceNo, name = c?.name.orEmpty(), phone = Fmt.toLatinDigits(c?.phone.orEmpty()),
         address = c?.address.orEmpty(), delivery = o.deliveryText, notes = o.notes,
         description = o.description, items = items,
-        total = o.total, deposit = o.deposit, remaining = o.remaining,
+        total = o.finalTotal, deposit = o.deposit, remaining = o.remaining,
         ready = o.stReady, settled = o.settled || o.paid, delivered = o.stDelivered,
     )
 }

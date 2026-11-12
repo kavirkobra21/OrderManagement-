@@ -10,6 +10,7 @@ Per order folder this script keeps Order/orders/<n>/telegram.json:
 so re-running the workflow never sends the same thing twice.
 """
 import argparse
+import datetime
 import hashlib
 import json
 import mimetypes
@@ -78,11 +79,29 @@ def item_lines(o, fa):
     return lines
 
 
+def final_total(o):
+    """Price after discounts. The app writes finalTotal; older files without discounts fall back to total."""
+    if o.get("finalTotal") is not None:
+        return int(o.get("finalTotal") or 0)
+    return int(o.get("total") or 0)
+
+
 def remaining(o):
     st = o.get("status", {})
     if st.get("settled") or st.get("paid"):
         return 0
-    return max(int(o.get("total") or 0) - int(o.get("deposit") or 0), 0)
+    return max(final_total(o) - int(o.get("deposit") or 0), 0)
+
+
+def discount_text(o, fa=True):
+    """"5% + 2,500 تومان" style description of the discounts, empty when there is none."""
+    pct, fixed = float(o.get("discountPercent") or 0), int(o.get("discountFixed") or 0)
+    parts = []
+    if pct > 0:
+        parts.append(to_latin(("%g" % pct)) + "%")
+    if fixed > 0:
+        parts.append(money(fixed, fa))
+    return " + ".join(parts)
 
 
 def build_message(o, c, fa=True):
@@ -109,7 +128,10 @@ def build_message(o, c, fa=True):
         out += [""]
         if items_sum:
             out += [f"(جمع آیتم‌ها): {money(items_sum)}"]
-        out += [f"(هزینه کل): {money(o.get('total'))}", f"(بیعانه): {money(o.get('deposit'))}",
+        out += [f"(هزینه کل): {money(o.get('total'))}"]
+        if int(o.get("discount") or 0) > 0:
+            out += [f"(تخفیف): {discount_text(o)} = {money(o.get('discount'))}", f"(مبلغ نهایی): {money(final_total(o))}"]
+        out += [f"(بیعانه): {money(o.get('deposit'))}",
                 f"(باقیمانده): {money(remaining(o))}", "",
                 f"(وضعیت پرداخت): {pay_status(o, True)}", f"(وضعیت سفارش): {order_status(o, True)}"]
     else:
@@ -129,7 +151,10 @@ def build_message(o, c, fa=True):
         out += [""]
         if items_sum:
             out += [f"Items Subtotal: {money(items_sum, False)}"]
-        out += [f"Total Amount: {money(o.get('total'), False)}", f"Deposit: {money(o.get('deposit'), False)}",
+        out += [f"Total Amount: {money(o.get('total'), False)}"]
+        if int(o.get("discount") or 0) > 0:
+            out += [f"Discount: {discount_text(o, False)} = {money(o.get('discount'), False)}", f"Final Amount: {money(final_total(o), False)}"]
+        out += [f"Deposit: {money(o.get('deposit'), False)}",
                 f"Remaining Balance: {money(remaining(o), False)}", "",
                 f"Payment Status: {pay_status(o, False)}", f"Order Status: {order_status(o, False)}"]
     return "\n".join(out)[:4000]
@@ -154,7 +179,10 @@ def template_values(o, c, fa=True):
     return {
         "name": c.get("name", ""), "id": c.get("contactId", ""),
         "order_id": str(o.get("syncNo", "")), "customer_name": c.get("name", ""), "items": "\n".join(item_lines(o, fa)),
-        "total_price": money(o.get("total"), fa), "status": f"{order_status(o, fa)} / {pay_status(o, fa)}",
+        "total_price": money(final_total(o), fa), "final_price": money(final_total(o), fa),
+        "original_price": money(o.get("total"), fa), "discount": money(o.get("discount"), fa) if int(o.get("discount") or 0) else "",
+        "discount_percent": to_latin("%g" % float(o.get("discountPercent") or 0)) if float(o.get("discountPercent") or 0) else "",
+        "discount_fixed": money(o.get("discountFixed"), fa) if int(o.get("discountFixed") or 0) else "", "status": f"{order_status(o, fa)} / {pay_status(o, fa)}",
         "created_at": o.get("dateText", ""), "description": (o.get("description") or "").strip(),
         "notes": (o.get("notes") or "").strip(), "quantity": to_latin(o.get("quantity") or 1),
         "phone": to_latin(c.get("phone", "")), "address": c.get("address", ""), "customer_id": c.get("contactId", ""),
@@ -201,6 +229,7 @@ def _multipart(fields, file_field, path):
 class Telegram:
     def __init__(self, token, chat_id):
         self.token, self.chat = token, str(chat_id)
+        self.stats = {"sent": 0, "edited": 0, "deleted": 0}
 
     def call(self, method, fields=None, file_field=None, path=None):
         """POST with retries: network errors / 5xx back off, 429 honours retry_after, other 4xx raise."""
@@ -244,21 +273,35 @@ class Telegram:
         raise last
 
     def send_text(self, text):
-        return self.call("sendMessage", {"text": text})["message_id"]
+        mid = self.call("sendMessage", {"text": text})["message_id"]
+        self.stats["sent"] += 1
+        return mid
 
     def edit_text(self, mid, text):
         self.call("editMessageText", {"message_id": mid, "text": text})
+        self.stats["edited"] += 1
+
+    def delete(self, mid):
+        """Deletes a message; one that is already gone counts as done."""
+        try:
+            self.call("deleteMessage", {"message_id": mid})
+            self.stats["deleted"] += 1
+        except TelegramError as e:
+            low = (e.desc or "").lower()
+            if "not found" not in low and "can't be deleted" not in low and "message_id_invalid" not in low:
+                raise
 
     def send_file(self, path, caption=None):
         big = os.path.getsize(path) > MAX_PHOTO_BYTES or os.path.splitext(path)[1].lower() not in IMAGE_EXT
         f = {"caption": caption[:1000]} if caption else {}
-        if big:
-            return self.call("sendDocument", f, "document", path)["message_id"]
-        return self.call("sendPhoto", f, "photo", path)["message_id"]
+        mid = (self.call("sendDocument", f, "document", path) if big else self.call("sendPhoto", f, "photo", path))["message_id"]
+        self.stats["sent"] += 1
+        return mid
 
     def edit_photo(self, mid, path):
         media = json.dumps({"type": "photo", "media": "attach://photo"})
         self.call("editMessageMedia", {"message_id": mid, "media": media}, "photo", path)
+        self.stats["edited"] += 1
 
 
 # ------------------------------------------------------------------ state + orders
@@ -319,6 +362,9 @@ def adopt_legacy(order, folder, existing):
             "imageSha": tg.get("imageHash", ""), "sentFiles": sent}
 
 
+ERRORS = []
+
+
 def process_order(tg, folder, fa, no, template="", resend=False, chat=""):
     order = load_json(os.path.join(folder, "order.json"))
     cust = load_json(os.path.join(folder, "customer.json"))
@@ -333,6 +379,18 @@ def process_order(tg, folder, fa, no, template="", resend=False, chat=""):
     before = json.dumps(state, sort_keys=True)
     ok = True
     try:
+        # ---- order moved to the trash in the app: its Telegram messages are removed, nothing is sent
+        if cust.get("deletedAt"):
+            for key in ("messageId", "photoMessageId"):
+                if state.get(key):
+                    tg.delete(state[key])
+                    print(f"order {no}: {key} deleted (order is in the trash)")
+                    state[key] = 0
+            state["textHash"] = ""
+            state["imageSha"] = ""
+            state["deleted"] = True
+            return True
+        state.pop("deleted", None)
         # ---- text: send once, afterwards edit the same message
         text = message_for(order, cust, fa, template)
         h = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -391,6 +449,7 @@ def process_order(tg, folder, fa, no, template="", resend=False, chat=""):
             print(f"order {no}: {rel} sent")
     except TelegramError as e:
         ok = False
+        ERRORS.append(f"#{no}: {e.desc or e}")
         print(f"::error::order {no}: {e.desc or e}")
     finally:
         if json.dumps(state, sort_keys=True) != before:
@@ -407,6 +466,16 @@ def order_dirs(root):
     return sorted(names, key=int)
 
 
+def write_summary(path, tg, failed):
+    """Result of the last manual sync; the app reads it to show counts and errors (no secrets in here)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    data = {"at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), "failed": failed,
+            "errors": ERRORS[:20], **tg.stats}
+    save_json(path, data)
+    if os.environ.get("GIT_COMMIT_STATE") == "1":
+        commit_state(path, "Telegram: sync summary")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--orders", default="Order/orders")
@@ -417,17 +486,17 @@ def main(argv=None):
 
     cfg = load_json(args.config, {}) or {}
     resend = args.resend.strip()
-    if cfg.get("enabled") is False and not args.test and not resend:
-        print("Telegram notifications are switched off in the app (config/notify.json); nothing to do.")
-        return 0
     fa = cfg.get("lang", "fa") != "en"
     dirs = order_dirs(args.orders)
+    data_dir = os.path.join(os.path.dirname(args.orders.rstrip("/")) or ".", "data")
+    tomb_path = os.path.join(data_dir, "telegram_deleted.json")
+    tomb = [int(m) for m in ((load_json(tomb_path, {}) or {}).get("messages") or []) if str(m).lstrip("-").isdigit()]
     if resend:
         dirs = [d for d in dirs if d == resend.lstrip("#")]
         if not dirs:
             print(f"::error::order {resend} was not found in {args.orders}")
             return 1
-    if not dirs and not args.test:
+    if not dirs and not tomb and not args.test:
         print("No orders yet; nothing to do.")
         return 0
 
@@ -449,10 +518,18 @@ def main(argv=None):
             return 1
 
     failed = 0
+    for mid in tomb:                       # messages of orders that were permanently deleted in the app
+        try:
+            tg.delete(mid)
+        except TelegramError as e:
+            failed += 1
+            ERRORS.append(f"delete {mid}: {e.desc or e}")
+            print(f"::error::delete {mid}: {e.desc or e}")
     for n in dirs:
         if not process_order(tg, os.path.join(args.orders, n), fa, n, str(cfg.get("template") or ""), bool(resend), chat):
             failed += 1
     print(f"done: {len(dirs) - failed} ok, {failed} failed")
+    write_summary(os.path.join(data_dir, "telegram_status.json"), tg, failed)
     return 1 if failed else 0
 
 

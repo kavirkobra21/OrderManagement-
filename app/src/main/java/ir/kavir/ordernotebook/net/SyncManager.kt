@@ -110,7 +110,7 @@ class SyncManager(private val repo: Repo) {
                         when (op.kind) {
                             OpKind.GITHUB -> if (op.orderId == CONFIG_OP) pushConfig() else pushOrder(op.orderId)
                             OpKind.GH_DELETE -> deleteRemote(op.orderId)
-                            else -> Unit // legacy in-app Telegram jobs: delivery is done by the GitHub Action now
+                            else -> Unit // Telegram is NEVER sent by the background queue; only the manual "Sync to Telegram" button does that
                         }
                         dao.deleteOp(op.id)
                     } catch (e: IOException) {
@@ -135,7 +135,7 @@ class SyncManager(private val repo: Repo) {
 
     // ------------------------------------------------------------------ rendering
 
-    private fun renderPng(o: Order, c: Customer?): ByteArray {
+    fun renderPng(o: Order, c: Customer?): ByteArray {
         val bmp = NotebookPage.render(pageData(o, c), 1.8f)
         val out = ByteArrayOutputStream()
         bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
@@ -233,7 +233,7 @@ class SyncManager(private val repo: Repo) {
         if (!prefs.ghConfigured) return
         val api = GitHub(prefs)
         ensurePrivate(api)
-        val bytes = JSONObject().put("enabled", prefs.autoSend).put("lang", prefs.telegramLang).put("template", prefs.telegramTemplate)
+        val bytes = JSONObject().put("enabled", true).put("lang", prefs.telegramLang).put("template", prefs.telegramTemplate)
             .toString(2).toByteArray(Charsets.UTF_8)
         putIfChanged(api, "config/notify.json", bytes, api.sha("config/notify.json"), "Config: Telegram notifications")
     }
@@ -245,6 +245,13 @@ class SyncManager(private val repo: Repo) {
         ensurePrivate(api)
         for (root in listOf(ORDERS, LEGACY_ORDERS)) {
             val base = "$root/$no"
+            // remember the Telegram messages of this order so the next manual sync can remove them from the chat
+            runCatching { api.getText("$base/telegram.json") }.getOrNull()?.let { t ->
+                runCatching {
+                    val j = JSONObject(t)
+                    prefs.addTombstones(listOf(j.optLong("messageId"), j.optLong("photoMessageId")))
+                }
+            }
             val files = api.list(base).flatMap { if (it.type == "dir") api.list(it.path) else listOf(it) }.filter { it.type == "file" }
             files.forEach { api.delete(it.path, it.sha, "Delete order #$no") }
         }
@@ -273,7 +280,8 @@ class SyncManager(private val repo: Repo) {
             .put("schema", 1).put("uid", o.uid).put("syncNo", o.syncNo).put("customerUid", c.uid)
             .put("invoiceNo", o.invoiceNo).put("dateText", o.dateText).put("deliveryText", o.deliveryText)
             .put("description", o.description).put("notes", o.notes).put("items", items)
-            .put("quantity", o.quantity).put("total", o.total).put("deposit", o.deposit).put("remaining", o.remaining)
+            .put("quantity", o.quantity).put("total", o.total).put("discountPercent", o.discountPercent).put("discountFixed", o.discountFixed)
+            .put("discount", o.pricing.discount).put("finalTotal", o.finalTotal).put("deposit", o.deposit).put("remaining", o.remaining)
             .put("status", JSONObject()
                 .put("registered", o.stRegistered).put("inProgress", o.stInProgress).put("ready", o.stReady)
                 .put("delivered", o.stDelivered).put("paid", o.paid).put("depositReceived", o.depositReceived)
@@ -355,7 +363,7 @@ class SyncManager(private val repo: Repo) {
             id = lo?.id ?: 0, customerId = customerId, invoiceNo = oj.optString("invoiceNo"), dateText = oj.optString("dateText"),
             deliveryText = oj.optString("deliveryText"), description = oj.optString("description"),
             itemsText = OrderItem.encode(itemList), notes = oj.optString("notes"),
-            quantity = oj.optInt("quantity", 1).coerceAtLeast(1), total = oj.optLong("total"), deposit = oj.optLong("deposit"),
+            quantity = oj.optInt("quantity", 1).coerceAtLeast(1), total = oj.optLong("total"), discountPercent = oj.optDouble("discountPercent", 0.0).let { if (it.isNaN()) 0.0 else it }, discountFixed = oj.optLong("discountFixed", 0), deposit = oj.optLong("deposit"),
             stRegistered = st.optBoolean("registered", true), stInProgress = st.optBoolean("inProgress"),
             stReady = st.optBoolean("ready"), stDelivered = st.optBoolean("delivered"),
             paid = st.optBoolean("paid"), depositReceived = st.optBoolean("depositReceived"), settled = st.optBoolean("settled"),

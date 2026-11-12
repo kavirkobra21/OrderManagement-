@@ -73,7 +73,7 @@ class RepoSetup(private val ctx: Context, private val prefs: Prefs) {
             val sc = putIfChanged(api, ".github/scripts/telegram_notify.py", asset("telegram_notify.py"), "Setup: Telegram script")
             if (api.sha("README.md") == null) api.put("README.md",
                 "# Order Notebook data\n\nPrivate storage for orders (orders/<n>/). Written by the Order Notebook app; Telegram messages are sent by GitHub Actions.\n".toByteArray(), "Setup: README", null)
-            val cfg = JSONObject().put("enabled", prefs.autoSend).put("lang", prefs.telegramLang).put("template", prefs.telegramTemplate).toString(2).toByteArray()
+            val cfg = JSONObject().put("enabled", true).put("lang", prefs.telegramLang).put("template", prefs.telegramTemplate).toString(2).toByteArray()
             putIfChanged(api, "config/notify.json", cfg, "Config: Telegram notifications")
             steps += Step("Workflow و اسکریپت تلگرام", true, if (wf || sc) "ساخته/به‌روز شد" else "از قبل به‌روز بود")
 

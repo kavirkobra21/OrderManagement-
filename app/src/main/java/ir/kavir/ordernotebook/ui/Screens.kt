@@ -192,7 +192,10 @@ fun OrderRow(o: Order, onClick: () -> Unit) {
                     if (it.price > 0) Text(Fmt.toman(it.price * it.qty), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                 }
             }
-            Text("کل: ${Fmt.toman(o.total)}   باقی‌مانده: ${Fmt.toman(o.remaining)}")
+            if (o.pricing.discount > 0) {
+                Text("قیمت اصلی: ${Fmt.toman(o.total)}   تخفیف: -${Fmt.toman(o.pricing.discount)}", style = MaterialTheme.typography.bodySmall)
+                Text("قیمت نهایی: ${Fmt.toman(o.finalTotal)}   باقی‌مانده: ${Fmt.toman(o.remaining)}")
+            } else Text("کل: ${Fmt.toman(o.total)}   باقی‌مانده: ${Fmt.toman(o.remaining)}")
             Text(
                 when { o.stDelivered -> "تحویل داده شده"; o.stReady -> "آماده شده"; o.stInProgress -> "در حال انجام"; else -> "ثبت شده" },
                 color = MaterialTheme.colorScheme.primary,
