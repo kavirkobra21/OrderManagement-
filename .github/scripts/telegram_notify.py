@@ -229,7 +229,7 @@ def _multipart(fields, file_field, path):
 class Telegram:
     def __init__(self, token, chat_id):
         self.token, self.chat = token, str(chat_id)
-        self.stats = {"sent": 0, "edited": 0, "deleted": 0}
+        self.stats = {"sent": 0, "edited": 0, "deleted": 0, "resent": 0}
 
     def call(self, method, fields=None, file_field=None, path=None):
         """POST with retries: network errors / 5xx back off, 429 honours retry_after, other 4xx raise."""
@@ -278,8 +278,15 @@ class Telegram:
         return mid
 
     def edit_text(self, mid, text):
-        self.call("editMessageText", {"message_id": mid, "text": text})
-        self.stats["edited"] += 1
+        """Edits a message in place. Returns True when the text really changed, False when it was already identical
+        (Telegram answers "message is not modified"). Raises TelegramError(not_found=True) when the message no longer exists,
+        so an unchanged edit doubles as an invisible existence check - the Bot API cannot list chat messages."""
+        res = self.call("editMessageText", {"message_id": mid, "text": text})
+        return res is not None
+
+    def probe_caption(self, mid, caption):
+        """Existence check of a photo/document message: re-applies its own caption (no visible change)."""
+        self.call("editMessageCaption", {"message_id": mid, "caption": (caption or "")[:1000]})
 
     def delete(self, mid):
         """Deletes a message; one that is already gone counts as done."""
@@ -363,6 +370,14 @@ def adopt_legacy(order, folder, existing):
 
 
 ERRORS = []
+# order numbers (#n) touched by this run, for the report: first sent / edited in place / sent again because missing in Telegram
+SENT, EDITED, RESENT = [], [], []
+
+
+def _note(lst, no):
+    no = int(no) if str(no).isdigit() else no
+    if no not in lst:
+        lst.append(no)
 
 
 def process_order(tg, folder, fa, no, template="", resend=False, chat=""):
@@ -400,18 +415,31 @@ def process_order(tg, folder, fa, no, template="", resend=False, chat=""):
             state["sentFiles"] = {}
         if resend:
             state["messageId"] = 0          # explicit "Resend to Telegram": always a NEW message
-        if state.get("messageId") and state.get("textHash") != h:
+        was_sent = bool(state.get("messageId"))
+        missing = False
+        if state.get("messageId"):
+            # ALWAYS ask Telegram (never trust the local history alone): editing with the current text updates a changed
+            # invoice, leaves an identical one untouched, and fails with "not found" when it was deleted from the chat.
             try:
-                tg.edit_text(state["messageId"], text)
+                if tg.edit_text(state["messageId"], text):
+                    tg.stats["edited"] += 1
+                    _note(EDITED, no)
+                    print(f"order {no}: message edited")
                 state["textHash"] = h
-                print(f"order {no}: message edited")
             except TelegramError as e:
                 if not e.not_found:
                     raise
                 state["messageId"] = 0
+                missing = True
+                print(f"order {no}: message is missing in Telegram - sending it again")
         if not state.get("messageId"):
             state["messageId"] = tg.send_text(text)
             state["textHash"] = h
+            if missing:
+                tg.stats["resent"] += 1
+                _note(RESENT, no)
+            else:
+                _note(SENT, no)
             print(f"order {no}: message sent" + (" (resend)" if resend else ""))
 
         # ---- generated notebook image
@@ -420,18 +448,28 @@ def process_order(tg, folder, fa, no, template="", resend=False, chat=""):
             sha = sha256_file(img)
             cap = (f"فاکتور {order.get('invoiceNo', '')} — سفارش #{order.get('syncNo', no)}" if fa
                    else f"Invoice {to_latin(order.get('invoiceNo', ''))} — order #{order.get('syncNo', no)}")
-            if state.get("photoMessageId") and state.get("imageSha") != sha:
+            pmissing = False
+            if state.get("photoMessageId"):
                 try:
-                    tg.edit_photo(state["photoMessageId"], img)
-                    state["imageSha"] = sha
-                    print(f"order {no}: image edited")
+                    if state.get("imageSha") != sha:
+                        tg.edit_photo(state["photoMessageId"], img)
+                        state["imageSha"] = sha
+                        _note(EDITED, no)
+                        print(f"order {no}: image edited")
+                    else:
+                        tg.probe_caption(state["photoMessageId"], cap)
                 except TelegramError as e:
                     if not e.not_found:
                         raise
                     state["photoMessageId"] = 0
+                    pmissing = True
+                    print(f"order {no}: image is missing in Telegram - sending it again")
             if not state.get("photoMessageId"):
                 state["photoMessageId"] = tg.send_file(img, cap)
                 state["imageSha"] = sha
+                if pmissing:
+                    tg.stats["resent"] += 1
+                    _note(RESENT, no)
                 print(f"order {no}: image sent")
 
         # ---- receipts and every other photo of the order, each exactly once
@@ -441,10 +479,22 @@ def process_order(tg, folder, fa, no, template="", resend=False, chat=""):
             if not rel or not os.path.isfile(p):
                 continue
             sha = sha256_file(p)
-            if state["sentFiles"].get(rel) == sha:
-                continue
             lab = ATT_LABEL.get(a.get("type"), ("عکس", "Photo"))[0 if fa else 1]
-            tg.send_file(p, f"{lab} — {'فاکتور' if fa else 'invoice'} {order.get('invoiceNo', '')}")
+            acap = f"{lab} — {'فاکتور' if fa else 'invoice'} {order.get('invoiceNo', '')}"
+            ids = state.setdefault("sentIds", {})
+            if state["sentFiles"].get(rel) == sha:
+                if not ids.get(rel):
+                    continue                       # sent by an older version: no message id to check
+                try:
+                    tg.probe_caption(ids[rel], acap)
+                    continue
+                except TelegramError as e:
+                    if not e.not_found:
+                        raise
+                    print(f"order {no}: {rel} is missing in Telegram - sending it again")
+                    tg.stats["resent"] += 1
+                    _note(RESENT, no)
+            ids[rel] = tg.send_file(p, acap)
             state["sentFiles"][rel] = sha
             print(f"order {no}: {rel} sent")
     except TelegramError as e:
@@ -470,7 +520,8 @@ def write_summary(path, tg, failed):
     """Result of the last manual sync; the app reads it to show counts and errors (no secrets in here)."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     data = {"at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"), "failed": failed,
-            "errors": ERRORS[:20], **tg.stats}
+            "errors": ERRORS[:20], **{**tg.stats, "sent": max(0, tg.stats["sent"] - tg.stats["resent"])},
+            "sentInvoices": SENT, "editedInvoices": EDITED, "resentInvoices": RESENT}
     save_json(path, data)
     if os.environ.get("GIT_COMMIT_STATE") == "1":
         commit_state(path, "Telegram: sync summary")

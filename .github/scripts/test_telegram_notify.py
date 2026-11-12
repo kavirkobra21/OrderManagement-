@@ -14,6 +14,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 REQUESTS = []
 SCRIPT = {}
 COUNTER = [100]
+CHANGES = []
+GONE = set()      # message ids deleted from the fake chat
+CONTENT = {}      # message id -> last text/caption
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -27,11 +30,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
         queued = SCRIPT.get(method) or []
         if queued:
             status, payload = queued.pop(0)
+        elif method in ("editMessageText", "editMessageCaption"):
+            # behave like Telegram: identical content -> "not modified", deleted message -> "not found"
+            try:
+                j = json.loads(body)
+            except Exception:
+                j = {}
+            mid, content = j.get("message_id"), j.get("text", j.get("caption"))
+            if mid in GONE:
+                status, payload = 400, {"ok": False, "error_code": 400, "description": "Bad Request: message to edit not found"}
+            elif (CONTENT.get(mid) == content and mid in CONTENT) or (method == "editMessageCaption" and mid not in CONTENT):
+                status, payload = 400, {"ok": False, "error_code": 400, "description": "Bad Request: message is not modified"}
+            else:
+                CONTENT[mid] = content
+                status, payload = 200, {"ok": True, "result": True}
+        elif method == "deleteMessage":
+            GONE.add(json.loads(body).get("message_id"))
+            status, payload = 200, {"ok": True, "result": True}
         elif method.startswith("edit"):
             status, payload = 200, {"ok": True, "result": True}
         else:
             COUNTER[0] += 1
             status, payload = 200, {"ok": True, "result": {"message_id": COUNTER[0]}}
+            if method == "sendMessage":
+                try:
+                    CONTENT[COUNTER[0]] = json.loads(body).get("text")
+                except Exception:
+                    pass
+        if status == 200:
+            CHANGES.append(method)       # only calls that really changed the chat (probes answered "not modified"/"not found" do not)
         data = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -51,6 +78,10 @@ os.environ.pop("GIT_COMMIT_STATE", None)
 import telegram_notify as tn  # noqa: E402
 
 
+def changes():
+    return list(CHANGES)
+
+
 def methods():
     return [m for m, _ in REQUESTS]
 
@@ -68,8 +99,12 @@ def order(**kw):
 
 class Base(unittest.TestCase):
     def setUp(self):
-        REQUESTS.clear()
+        REQUESTS.clear(); CHANGES.clear()
         SCRIPT.clear()
+        GONE.clear()
+        CHANGES.clear()
+        CONTENT.clear()
+        tn.ERRORS.clear(); tn.SENT.clear(); tn.EDITED.clear(); tn.RESENT.clear()
         self.tmp = tempfile.mkdtemp()
         self.root = os.path.join(self.tmp, "orders")
         self.folder = os.path.join(self.root, "7")
@@ -138,37 +173,37 @@ class Delivery(Base):
 
     def test_rerun_sends_nothing(self):
         self.assertEqual(self.run_main(), 0)
-        REQUESTS.clear()
+        REQUESTS.clear(); CHANGES.clear()
         self.assertEqual(self.run_main(), 0)
-        self.assertEqual(methods(), [])  # no duplicates when the Action runs again
+        self.assertEqual(changes(), [])  # no duplicates when the Action runs again
 
     def test_changed_order_edits_same_message(self):
         self.run_main()
         mid = self.state()["messageId"]
-        REQUESTS.clear()
+        REQUESTS.clear(); CHANGES.clear()
         self.write_order(order(total=150000))
         self.assertEqual(self.run_main(), 0)
-        self.assertEqual(methods(), ["editMessageText"])
+        self.assertEqual(changes(), ["editMessageText"])
         self.assertIn(str(mid).encode(), REQUESTS[0][1])
         self.assertIn("150,000".encode(), REQUESTS[0][1])
 
     def test_changed_image_edits_photo(self):
         self.run_main()
-        REQUESTS.clear()
+        REQUESTS.clear(); CHANGES.clear()
         self.write_bytes("order_image.png", b"PNG-v2")
         self.assertEqual(self.run_main(), 0)
-        self.assertEqual(methods(), ["editMessageMedia"])
+        self.assertEqual(changes(), ["editMessageMedia"])
 
     def test_new_attachment_sent_once(self):
         self.run_main()
-        REQUESTS.clear()
+        REQUESTS.clear(); CHANGES.clear()
         self.write_bytes("images/p.jpg", b"JPG-3")
         self.write_order(order(attachments=[{"path": "images/p.jpg", "type": "product"}]))
         self.run_main()
         self.assertEqual(methods().count("sendPhoto"), 1)
-        REQUESTS.clear()
+        REQUESTS.clear(); CHANGES.clear()
         self.run_main()
-        self.assertEqual(methods(), [])
+        self.assertEqual(changes(), [])
 
     def test_retries_rate_limit_and_server_errors(self):
         SCRIPT["sendMessage"] = [
@@ -184,17 +219,18 @@ class Delivery(Base):
         self.assertEqual(self.run_main(), 1)
         self.assertEqual(methods(), ["sendMessage"])       # not retried
         self.assertFalse(os.path.exists(os.path.join(self.folder, "telegram.json")))
-        REQUESTS.clear()
+        REQUESTS.clear(); CHANGES.clear()
         self.assertEqual(self.run_main(), 0)                # next run delivers it
         self.assertEqual(methods()[0], "sendMessage")
 
     def test_deleted_message_is_resent(self):
         self.run_main()
-        REQUESTS.clear()
+        REQUESTS.clear(); CHANGES.clear()
         SCRIPT["editMessageText"] = [(400, {"ok": False, "description": "Bad Request: message to edit not found"})]
         self.write_order(order(total=1))
         self.assertEqual(self.run_main(), 0)
-        self.assertEqual(methods(), ["editMessageText", "sendMessage"])
+        self.assertEqual(changes(), ["sendMessage"])
+        self.assertEqual(tn.RESENT, [7])
 
     def test_adopts_message_ids_from_old_in_app_sender(self):
         self.write_bytes("payment_receipt.jpg", b"JPG-1")
@@ -202,8 +238,66 @@ class Delivery(Base):
             attachments=[{"path": "payment_receipt.jpg", "type": "receipt"}],
             telegram={"messageId": 55, "photoMessageId": 56, "imageHash": tn.sha256_file(os.path.join(self.folder, "order_image.png"))}))
         self.assertEqual(self.run_main(), 0)
-        self.assertEqual(methods(), ["editMessageText"])    # edits message 55; no new message, image or receipt
+        self.assertEqual(changes(), ["editMessageText"])    # edits message 55; no new message, image or receipt
         self.assertIn(b"55", REQUESTS[0][1])
+
+
+class Reconcile(Base):
+    """Every manual sync asks Telegram which messages still exist (the local history alone is never trusted)."""
+
+    def seed(self, n):
+        for k in range(1, n + 1):
+            folder = os.path.join(self.root, str(k))
+            os.makedirs(os.path.join(folder, "images"), exist_ok=True)
+            json.dump(order(syncNo=k, invoiceNo=str(k)), open(os.path.join(folder, "order.json"), "w", encoding="utf-8"), ensure_ascii=False)
+            json.dump({"name": "x"}, open(os.path.join(folder, "customer.json"), "w"))
+            open(os.path.join(folder, "order_image.png"), "wb").write(b"PNG%d" % k)
+
+    def test_only_the_missing_invoice_is_sent_again(self):
+        shutil.rmtree(self.folder)
+        self.seed(3)
+        self.assertEqual(self.run_main(), 0)                 # first sync sends #1..#3
+        self.assertEqual(sorted(tn.SENT), [1, 2, 3])
+        mid4 = json.load(open(os.path.join(self.root, "2", "telegram.json")))["messageId"]
+        GONE.add(mid4)                                       # invoice #2 deleted by hand in Telegram
+        for lst in (tn.SENT, tn.EDITED, tn.RESENT):
+            lst.clear()
+        CHANGES.clear()
+        self.assertEqual(self.run_main(), 0)
+        self.assertEqual(tn.RESENT, [2])
+        self.assertEqual((tn.SENT, tn.EDITED), ([], []))
+        self.assertEqual(changes().count("sendMessage"), 1)  # #1 and #3 are not duplicated
+        new = json.load(open(os.path.join(self.root, "2", "telegram.json")))["messageId"]
+        self.assertNotEqual(new, mid4)
+        CHANGES.clear()
+        self.assertEqual(self.run_main(), 0)                 # and the next sync is quiet again
+        self.assertEqual(changes(), [])
+
+    def test_missing_photo_is_resent_with_same_caption(self):
+        self.assertEqual(self.run_main(), 0)
+        GONE.add(self.state()["photoMessageId"])
+        tn.RESENT.clear(); CHANGES.clear()
+        self.assertEqual(self.run_main(), 0)
+        self.assertEqual(changes(), ["sendPhoto"])
+        self.assertEqual(tn.RESENT, [7])
+
+    def test_missing_receipt_is_resent(self):
+        self.write_bytes("payment_receipt.jpg", b"JPG-1")
+        self.write_order(order(attachments=[{"path": "payment_receipt.jpg", "type": "receipt"}]))
+        self.assertEqual(self.run_main(), 0)
+        GONE.add(self.state()["sentIds"]["payment_receipt.jpg"])
+        tn.RESENT.clear(); CHANGES.clear()
+        self.assertEqual(self.run_main(), 0)
+        self.assertEqual(changes(), ["sendPhoto"])
+        self.assertEqual(tn.RESENT, [7])
+
+    def test_summary_lists_invoices(self):
+        self.assertEqual(self.run_main(), 0)
+        GONE.add(self.state()["messageId"])
+        self.assertEqual(self.run_main(), 0)
+        st = json.load(open(os.path.join(self.tmp, "data", "telegram_status.json")))
+        self.assertEqual(st["resentInvoices"], [7])
+        self.assertEqual(st["resent"], 1)
 
 
 class Deletion(Base):
@@ -216,7 +310,7 @@ class Deletion(Base):
         self.assertEqual(methods(), ["deleteMessage", "deleteMessage"])
         st = self.state()
         self.assertEqual((st["messageId"], st["photoMessageId"]), (0, 0))
-        REQUESTS.clear()
+        REQUESTS.clear(); CHANGES.clear()
         self.assertEqual(self.run_main(), 0)          # second run: nothing left to delete, nothing sent
         self.assertEqual(methods(), [])
 

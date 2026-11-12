@@ -29,6 +29,8 @@ class Telegram(private val token: String, private val chatId: String) {
         fun isGone(desc: String) = desc.contains("message to delete not found", true) ||
             desc.contains("MESSAGE_ID_INVALID", true) || desc.contains("message can't be deleted", true)
         private const val MAX_PHOTO = 9_500_000L
+        /** [Result.message] of an edit that changed nothing: the message still exists in the chat */
+        const val NOT_MODIFIED = "بدون تغییر"
     }
 
     private fun base() = "https://api.telegram.org/bot${token.trim()}"
@@ -68,6 +70,11 @@ class Telegram(private val token: String, private val chatId: String) {
         val r = call("deleteMessage", JSONObject().put("chat_id", chatId).put("message_id", messageId))
         return if (!r.ok && isGone(r.message)) Result(true, "OK") else r
     }
+
+    /** Invisible existence check of a photo/document message: re-applies its own caption. notFound = it was deleted. */
+    @Throws(IOException::class)
+    fun probeCaption(messageId: Long, caption: String = ""): Result =
+        call("editMessageCaption", JSONObject().put("chat_id", chatId).put("message_id", messageId).put("caption", caption))
 
     @Throws(IOException::class)
     fun sendPhoto(file: File, caption: String? = null): Result {
@@ -140,7 +147,7 @@ class Telegram(private val token: String, private val chatId: String) {
             return Result(true, msg, id)
         }
         val desc = j.optString("description")
-        if (desc.contains("message is not modified", true)) return Result(true, "بدون تغییر")
+        if (desc.contains("message is not modified", true)) return Result(true, NOT_MODIFIED)
         val notFound = desc.contains("message to edit not found", true) ||
             desc.contains("MESSAGE_ID_INVALID", true) || desc.contains("message can't be edited", true)
         val hint = when (code) {
