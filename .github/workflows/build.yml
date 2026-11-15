@@ -90,7 +90,12 @@ jobs:
       - name: Collect APKs
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/release/*.apk "dist/OrderNotebook-${{ steps.ver.outputs.name }}.apk" 2>/dev/null || true
+          # ONE universal APK: no ABI splits / filters, so it installs on every phone (arm64-v8a, armeabi-v7a, x86, x86_64)
+          cp app/build/outputs/apk/release/*.apk "dist/OrderNotebook-${{ steps.ver.outputs.name }}-universal.apk" 2>/dev/null || true
+          if [ -f "dist/OrderNotebook-${{ steps.ver.outputs.name }}-universal.apk" ]; then
+            echo "Native ABIs inside the universal APK (empty = pure Java/Kotlin, runs on every ABI):"
+            unzip -l "dist/OrderNotebook-${{ steps.ver.outputs.name }}-universal.apk" | grep -o 'lib/[^/]*/' | sort -u || true
+          fi
           cp app/build/outputs/apk/debug/*.apk "dist/OrderNotebook-${{ steps.ver.outputs.name }}-debug.apk" 2>/dev/null || true
           ls -la dist
 
